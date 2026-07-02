@@ -1,0 +1,7 @@
+/.cpcache/
+/target/
+/.clj-kondo/.cache/
+.slopp2/
+*.class
+.nrepl-port
+scratch/
