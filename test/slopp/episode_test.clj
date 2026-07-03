@@ -213,3 +213,26 @@
                              {:ns "ep.core" :name "sub-added"
                               :agent "alice"})))))
       (finally (api/close! sess)))))
+
+(deftest hook-json-mode-records-the-exact-user-words    ; the real hook shape
+  (let [dir (str (System/getProperty "java.io.tmpdir")
+                 "/slopp-hook-" (System/nanoTime))
+        sess (api/open! {:dir dir})]
+    (try
+      (api/ingest! sess 'ep.core seed)
+      ;; UserPromptSubmit pipes {"prompt": "..."} on stdin
+      (with-in-str "{\"prompt\":\"please add rush orders — exactly these words\",\"session_id\":\"x\"}"
+        (slopp.turn/-main dir "hook-begin" "alice"))
+      (api/sync-with-journal! sess)
+      (is (api/turn-open? sess "alice"))
+      (api/edit-replace! sess 'ep.core 'f "(defn f [x] (* x 4))"
+                         :prompt "work" :agent "alice")
+      (with-in-str "{}"
+        (slopp.turn/-main dir "hook-end" "alice"))
+      (api/sync-with-journal! sess)
+      (is (not (api/turn-open? sess "alice")))
+      (let [turn (first (keep :turn (api/query-history sess :collapse true)))]
+        (is (= "please add rush orders — exactly these words" (:intent turn))))
+      (finally
+        (api/close! sess)
+        (clojure.java.shell/sh "rm" "-rf" dir)))))

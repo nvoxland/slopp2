@@ -4,48 +4,74 @@
 
 - **The top-level form is THE unit** — of editing, CRDT/storage, hot-reload,
   verification, and provenance. One atom all the way down. Anything that
-  splits those units apart (file-based edits, sub-form patching, whole-project
-  reloads) works against the thesis.
-- **No `.clj` files on disk.** The store (delta log + materialized elements in
-  SQLite) is the source code. A VFS renders source on demand (`query-source`);
-  an explicit `build!` materializes real files only when asked. There is no
-  file→store reconciliation, ever.
-- **The system owns a persistent JVM image** (nREPL subprocess). It is the
-  L3 semantic oracle: behavior/shape questions are answered by *observation*
-  (eval, tracing) rather than static declaration. Refresh (hot redefine) is
-  the fast path; restart to a fresh image is the always-correct backstop.
-- **Agents address forms semantically** (`ns` + `name` or form id) — never
-  file+line. Reads return exactly the requested form/answer, which is where
-  the token win comes from.
-- **Every write is a tracked delta** `{op, ns, prompt, parent, ...}` — the
-  history IS the provenance ("who touched this, via which op, driven by which
-  prompt"). Raw REPL eval may observe but never redefines code.
+  splits those units apart (file-based edits, whole-project reloads) works
+  against the thesis. (`edit_subform` is content-addressed sugar that still
+  commits a whole form.)
+- **No `.clj` files on disk.** The store is the source code; a VFS renders
+  source on demand (`query-source`); explicit `build!` materializes files
+  only when asked. No file→store reconciliation, ever.
+- **The SQLite journal is the record of truth** (m5a inversion). Durable
+  commits are conditional appends (deltas + touched element rows + id
+  counter, ONE tx, iff the head still matches the commit's base); the
+  in-memory store is a cache that only ever trails the journal. Losers
+  refresh + rebase. There is no persist queue — the append IS the persist.
+  Ephemeral (api-level) sessions commit to the cache alone.
+- **Many servers, one store dir, is the operating model** (m5b/c): each
+  agent's own MCP server (spawned by its `.mcp.json`) shares the journal;
+  `data_version` + `sync-with-journal!` absorb foreign commits (cache, live
+  image, trace invalidation) before every tool call. Same-form races surface
+  `{:conflict}` to the stale writer; different-form work rebases and lands.
+- **The system owns persistent JVM images** (nREPL subprocesses; P1:
+  out-of-process for kill/exit/restart guarantees). The image is the L3
+  oracle: behavior questions answered by observation (eval, tracing).
+  Refresh is the fast path; restart is the always-correct backstop; reds are
+  cross-checked only when staleness is plausible (D5.1).
+- **Branches are lines; images belong to lines** (m3/m4): a branch is an
+  O(1) store snapshot with a name + uuid line-id, persisted as its own mini
+  journal under `.slopp/branches/<name>/`; checkout is per-SERVER state.
+  Switching parks the line's image intact (adopt on return; idle-reaped).
+  `branch_merge`/`merge_from` = delta-log replay with causal delivery
+  (`:applied`/`:id-map`/`:merged-from`, scoped per source) — different-form
+  work lands, identical changes converge, same-form divergence is an MV
+  conflict (ours live, theirs surfaced).
+- **Every write is a tracked delta** `{op, ns, prompt, agent, at, ...}`; the
+  provenance stack is TURN (verbatim user ask, `turn_begin`/`turn_end`;
+  enforced on real servers) → EPISODE (per-agent work-unit between
+  checkpoints, derived — nothing stored) → step → per-form version. Raw
+  REPL eval may observe but never redefines code.
 
 ## Layer map (bottom-up)
 
 | ns | Role |
 |---|---|
-| `slopp.store` | pure in-memory form store + delta log (elements = forms + separator trivia; synthetic stable ids) |
-| `slopp.render` | VFS: store → source string (lossless); `element-offsets` maps positions back to elements |
-| `slopp.db` | durability: SQLite `.slopp/store.db`, one ACID tx per mutation |
-| `slopp.repl` | owned image subprocess: start!/eval!/stop!/restart!; injects `slopp.rt` |
-| `slopp.rt` | runtime support *inside* the image: traced test runs + failure capture |
-| `slopp.image` | store↔image bridge: load-ns! (marks `*loaded-libs*`), test runs |
-| `slopp.index` | clj-kondo static index (content-fed, no disk): defs/refs/call graph, `!`-effect reachability |
-| `slopp.refactor` | position-based structural rewrites (rename) |
-| `slopp.edit` | the write pipeline: parse → dialect gate → store commit → hot-reload |
-| `slopp.api` | agent-facing operations + verification orchestration (a session atom: store, image, db, trace map, warm spare) |
-| `slopp.mcp` | JSON-RPC 2.0 stdio MCP server over `slopp.api` (`clojure -M -m slopp.mcp`) |
-| `slopp.bench` / `slopp.benchmark` | token-vs-grep metric / sample-app build benchmark |
+| `slopp.store` | pure form store + delta log + merge engine (`merge-logs`) + episode snapshots (`sources-at`) |
+| `slopp.render` | VFS: store → source (lossless, memoized); `element-offsets` maps positions back to elements |
+| `slopp.db` | the journal: SQLite WAL, conditional `append!`, `data-version`, `load-store`; `persist!` only for branch snapshots |
+| `slopp.repl` | owned image subprocess: start!/eval!/eval-checked!/load-checked!/stop!; injects `slopp.rt` |
+| `slopp.rt` | runtime support inside the image: traced (multi-ns) test runs + failure capture, observe |
+| `slopp.image` | store↔image bridge: load-ns!, traced-test-run (dependency-closure instrumentation) |
+| `slopp.index` | clj-kondo static index (content-fed): defs/refs/call graph, `!`-effect reachability, lint |
+| `slopp.refactor` | position-based structural rewrites (rename, extract, subform) |
+| `slopp.edit` | write pipeline pieces: parse → dialect gate → hot-load; observe gate |
+| `slopp.api` | operations + verification orchestration; session atom = cache of one line (store, image, db conn, lines, trace map) |
+| `slopp.mcp` | MCP over stdio; tool schemas, hints, turn gate; `handle` is pure dispatch |
+| `slopp.http` | same dispatch over localhost HTTP: `/call` (curl), `/mcp` (native MCP, shared-server mode), `/metrics` |
+| `slopp.turn` | one-shot CLI for Claude Code hooks: verbatim-prompt turn markers appended out-of-band |
+| `slopp.build` | explicit build: files + GraalVM native-image recipe (O4) |
+| `slopp.bench` / `slopp.benchmark` | metrics / scripted sample-app benchmark |
 
 ## Cross-cutting gotchas
 
-- Store namespaces have **no classpath presence**; after `load-ns!` the ns is
-  marked in `*loaded-libs*` so other store namespaces can `(:require ...)` it.
-  Load order across namespaces is ingestion order (topological load is a known
-  Phase-1 gap).
-- The rendered source is the coordinate system: clj-kondo rows/cols are
-  positions in `render-ns` output; `render/element-offsets` + owner mapping
-  translate them to store elements (see `slopp.refactor`).
-- Host language is Clojure/JVM by decision H1 (same runtime as the image and
-  the tooling); the CRDT will be Clojure too — **no Rust planned**.
+- Store namespaces have **no classpath presence**; `load-ns!` marks
+  `*loaded-libs*`. Cross-ns loads must be TOPOLOGICAL (`ns-dependency-order`
+  — X3: map order goes hash past 8 entries and silently drops namespaces).
+- The rendered source is the coordinate system: kondo rows/cols are
+  positions in `render-ns` output, translated back via `element-offsets`.
+- Image work is serialized per-eval by the single nREPL session; keep
+  multi-step image operations inside ONE eval (traced-run does).
+- Delta ids are monotonic per line — two forks/branches from one point mint
+  COLLIDING ids. Everything cross-line therefore keys on causal bookkeeping
+  (never value/id identity): `:applied`, `:id-map`, `:merged-from`, and the
+  recreated-source guard.
+- Host language is Clojure/JVM by decision H1; the CRDT is Clojure —
+  **no Rust planned**.

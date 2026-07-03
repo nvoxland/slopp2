@@ -72,6 +72,24 @@ agent gets a PRIVATE checkout: branch_create / branch_switch are per-server
 state, so one agent lives on `feature` while another keeps `main` green,
 sharing branch storage under `.slopp/branches/`.
 
+### Automatic turn provenance (recommended hooks)
+
+Real servers refuse writes without an open turn (the journal must know the
+user's ask). Wire it so the model never has to relay its own instructions —
+per agent workspace, `.claude/settings.json`:
+
+```json
+{"hooks": {
+  "UserPromptSubmit": [{"hooks": [{"type": "command",
+    "command": "cd /abs/slopp-repo && clojure -M -m slopp.turn /abs/project hook-begin alice"}]}],
+  "Stop": [{"hooks": [{"type": "command",
+    "command": "cd /abs/slopp-repo && clojure -M -m slopp.turn /abs/project hook-end alice"}]}]}}
+```
+
+The hook reads Claude Code's JSON from stdin and appends the turn marker
+(with the VERBATIM prompt) straight to the journal; the agent's server
+absorbs it before its next tool call.
+
 ## Multi-agent: many clients, ONE server (alternative)
 
 The HTTP server also speaks native MCP at `/mcp` (streamable HTTP). Point
