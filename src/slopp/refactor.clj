@@ -102,6 +102,47 @@
              [(str (subs (ls (dec sr)) 0 (dec sc)) repl (subs (ls (dec er)) (dec ec)))]
              (subvec ls er)))))
 
+(defn- find-unique-subform
+  "The unique position-tracked zloc in `form-src` whose sexpr structurally
+  equals `match-src`'s (shared by extract and subform edits). Returns
+  {:zloc l} or {:error msg} (absence/ambiguity with counts)."
+  [form-src match-src what]
+  (let [target  (n/sexpr (p/parse-string match-src))
+        matches (->> (iterate z/next (z/of-string form-src {:track-position? true}))
+                     (take-while (complement z/end?))
+                     (filter #(try (= target (z/sexpr %))
+                                   (catch Exception _ false)))
+                     vec)]
+    (cond
+      (empty? matches)
+      {:error (str "subform not found in " what)}
+
+      (< 1 (count matches))
+      {:error (str "subform occurs " (count matches) " times in " what
+                   " — ambiguous; give a larger enclosing subform")}
+
+      :else {:zloc (first matches)})))
+
+(defn subform-replace-plan
+  "Plan replacing the unique occurrence of `match-src` inside `form-name` with
+  `new-src` (item 5 — paredit's valid-tree→valid-tree invariant, content-
+  addressed: siblings are never re-transcribed). Returns {:new-form-src s}
+  or {:error msg}."
+  [store ns-sym form-name match-src new-src]
+  (try
+    (if-let [e (store/form-named store ns-sym form-name)]
+      (let [form-src (n/string (:node e))
+            found    (find-unique-subform form-src match-src form-name)]
+        (if (:error found)
+          found
+          (let [m       (:zloc found)
+                [r c]   (z/position m)
+                [er ec] (node-span [r c] (n/string (z/node m)))]
+            {:new-form-src (replace-span form-src [r c] [er ec] new-src)})))
+      {:error (str "no form named " form-name " in " ns-sym)})
+    (catch Exception ex
+      {:error (str "subform edit failed: " (ex-message ex))})))
+
 (defn extract-plan
   "Plan extracting the unique occurrence of `subform-src` inside `from-name`
   into a new fn `new-name`: params = the free locals (bound outside the
@@ -111,22 +152,10 @@
   (try
     (if-let [e (store/form-named store ns-sym from-name)]
       (let [form-src (n/string (:node e))
-            target   (n/sexpr (p/parse-string subform-src))
-            matches  (->> (iterate z/next (z/of-string form-src {:track-position? true}))
-                          (take-while (complement z/end?))
-                          (filter #(try (= target (z/sexpr %))
-                                        (catch Exception _ false)))
-                          vec)]
-        (cond
-          (empty? matches)
-          {:error (str "subform not found in " from-name)}
-
-          (< 1 (count matches))
-          {:error (str "subform occurs " (count matches) " times in " from-name
-                       " — extraction is ambiguous")}
-
-          :else
-          (let [m        (first matches)
+            found    (find-unique-subform form-src subform-src from-name)]
+        (if (:error found)
+          found
+          (let [m        (:zloc found)
                 [r c]    (z/position m)
                 sub-str  (n/string (z/node m))
                 [er ec]  (node-span [r c] sub-str)

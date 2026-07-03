@@ -122,6 +122,14 @@
                                :prompt {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "name"]}}
+   {:name "edit_subform"
+    :description "Replace ONE subexpression inside a form (give the exact subform source as `match` and its replacement as `source`) — for small changes inside big forms; never re-transcribe the rest. Wrap = a replacement containing the match."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :form {:type "string"}
+                               :match {:type "string"} :source {:type "string"}
+                               :prompt {:type "string"}
+                               :verbose {:type "boolean"}}
+                  :required ["ns" "form" "match" "source"]}}
    {:name "edit_revert"
     :description "Revert a form to an earlier version of itself (default: previous; or a specific delta id from query_form_history). Verified and recorded like any write."
     :inputSchema {:type "object"
@@ -351,6 +359,16 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
                                                          :prompt (:prompt a))
                                     (select-keys [:error :test :affected :delta])
                                     (summarize (:verbose a))))
+      "edit_subform"      (let [match (or (:match a) (:from a))
+                                src   (or (:source a) (:to a))]
+                            (when-not (and match src)
+                              (throw (ex-info "edit_subform needs :match (exact subform source) and :source (its replacement)" {})))
+                            (text (-> (api/edit-subform! session (sym :ns) (sym :form)
+                                                         match src
+                                                         :prompt (:prompt a))
+                                      (select-keys [:error :conflict :warnings :existing-warnings
+                                                    :untested :image-healed :test :affected :delta :ms])
+                                      (summarize (:verbose a)))))
       "edit_revert"       (text (-> (api/revert-form! session (sym :ns) (sym :name)
                                                       :to (:to a) :prompt (:prompt a))
                                     (select-keys [:error :conflict :warnings :test

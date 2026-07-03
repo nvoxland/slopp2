@@ -871,6 +871,21 @@
              :lint       lint}
       summary (assoc :test summary))))
 
+(defn edit-subform!
+  "Item 5 — paredit's invariant, agent-shaped: replace the UNIQUE structural
+  occurrence of `match` inside form `form-name` with `new-src`
+  (content-addressed; wrap/unwrap are just 'new subform containing/omitting
+  the old'). The payload scales with the CHANGE and sibling code is never
+  re-transcribed. Rides the full replace pipeline: dialect gate on the
+  RESULTING form, rebase/conflict commit, verification, provenance."
+  [session ns-sym form-name match new-src & {:keys [prompt]}]
+  (let [plan (refactor/subform-replace-plan (:store @session) ns-sym form-name
+                                            match new-src)]
+    (if (:error plan)
+      plan
+      (edit-replace! session ns-sym form-name (:new-form-src plan)
+                     :prompt (or prompt (str "subform edit in " form-name))))))
+
 (defn revert-form!
   "One-call rollback (item 4): replace `nm` with an earlier version of itself —
   by default the previous one, or the version at delta `:to` (see
