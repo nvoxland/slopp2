@@ -81,6 +81,10 @@ observe real behavior instead of reading callers. It cannot define or modify
 rebuilds a faithful image from the store).
 
 - "What does this return for X?" → `query_eval "(my.ns/f X)"`
+- "What flows through f when the system runs?" → `query_observe {ns name code}`
+  — captures each call's args/return while your driver code runs. Use this
+  instead of reading callers to figure out shapes.
+- "What does this macro do?" → `query_macroexpand {code}`
 - "Who calls this?" → `query_references`
 - "Why does this test fail?" → the `:failures` in the result, then
   `query_eval` to probe.

@@ -142,6 +142,32 @@
     {:error err}
     (repl/eval! (:image @session) code)))
 
+(defn query-observe
+  "Run `driver-code` (observe-gated) while capturing the args and return value
+  of up to `:limit` calls to `ns-sym/nm` — the oracle's direct answer to 'what
+  flows through this function?' (D2: observe, don't declare)."
+  [session ns-sym nm driver-code & {:keys [limit] :or {limit 10}}]
+  (if-let [err (edit/observe-gate driver-code)]
+    {:error err}
+    (first (repl/eval! (:image @session)
+                       (format "(slopp.rt/observe '%s/%s (fn [] %s) %d)"
+                               ns-sym nm driver-code limit)))))
+
+(defn query-macroexpand
+  "Expand a form (built-in macros are part of the dialect; expansion is how
+  the oracle explains them). Returns {:expand-1 str :full str} or {:error}."
+  [session code]
+  (try
+    (let [{:keys [error]} (edit/parse-form code)]
+      ;; parse-form also dialect-checks; for expansion we only care that it READS
+      (if (and error (re-find #"unparseable" error))
+        {:error error}
+        {:expand-1 (first (repl/eval! (:image @session)
+                                      (format "(pr-str (macroexpand-1 '%s))" code)))
+         :full     (first (repl/eval! (:image @session)
+                                      (format "(pr-str (macroexpand '%s))" code)))}))
+    (catch Exception e {:error (ex-message e)})))
+
 (defn query-namespaces
   "What exists? Every store namespace with its form count (orientation, T2)."
   [session]

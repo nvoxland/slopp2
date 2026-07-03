@@ -30,6 +30,38 @@
               (pr-str x))
             400))
 
+(defn observe
+  "Temporarily instrument the var named by `target` (qualified symbol),
+  capturing the args and return (or thrown exception) of up to `limit` calls
+  while `thunk` runs; the original is restored in a finally. The oracle's
+  answer to 'what actually flows through this function?'
+  Returns {:result str :calls [{:args [str] :ret str (or :threw str)}] :count n}."
+  [target thunk limit]
+  (let [v     (resolve target)
+        orig  @v
+        calls (atom [])
+        note! (fn [entry]
+                (when (< (count @calls) limit)
+                  (swap! calls conj entry)))]
+    (alter-var-root
+     v (fn [_]
+         (fn [& args]
+           (let [shown (mapv #(truncate (pr-str %) 200) args)]
+             (try
+               (let [ret (apply orig args)]
+                 (note! {:args shown :ret (truncate (pr-str ret) 200)})
+                 ret)
+               (catch Throwable e
+                 (note! {:args shown :threw (render-actual e)})
+                 (throw e)))))))
+    (try
+      (let [res (thunk)]
+        {:result (truncate (pr-str res) 400)
+         :calls  @calls
+         :count  (count @calls)})
+      (finally
+        (alter-var-root v (constantly orig))))))
+
 (defn traced-run
   "Run `test-ns`'s test vars (all of them, or just those named in `only`),
   recording which fn vars of `target-nses` each test touches. Instrumentation is

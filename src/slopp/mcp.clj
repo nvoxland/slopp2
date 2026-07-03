@@ -71,6 +71,17 @@
    {:name "query_eval"
     :description "Read-only eval against the live image (the oracle); never edits code."
     :inputSchema {:type "object" :properties {:code {:type "string"}} :required ["code"]}}
+   {:name "query_observe"
+    :description "Run driver code while capturing the args and return value of calls to ns/name — 'what actually flows through this function?'"
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :name {:type "string"}
+                               :code {:type "string"}
+                               :limit {:type "integer"}}
+                  :required ["ns" "name" "code"]}}
+   {:name "query_macroexpand"
+    :description "Show a form's macroexpansion (expand-1 and full)."
+    :inputSchema {:type "object" :properties {:code {:type "string"}}
+                  :required ["code"]}}
    {:name "edit_replace_form"
     :description "Replace a whole top-level form (tracked delta, hot-reload, verify)."
     :inputSchema {:type "object"
@@ -179,6 +190,10 @@
       "query_references"  (text (vec (api/query-references session (sym :ns) (sym :name))))
       "query_lineage"     (text (vec (api/query-lineage session (sym :ns) (sym :name))))
       "query_eval"        (text (api/query-eval session (:code a)))
+      "query_observe"     (text (api/query-observe session (sym :ns) (sym :name)
+                                                   (:code a)
+                                                   :limit (or (:limit a) 10)))
+      "query_macroexpand" (text (api/query-macroexpand session (:code a)))
       "edit_replace_form" (text (-> (api/edit-replace! session (sym :ns) (sym :name)
                                                        (:source a) :prompt (:prompt a))
                                     (select-keys [:error :warnings :existing-warnings
