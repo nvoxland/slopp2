@@ -64,6 +64,9 @@ Server: `clojure -M -m slopp.mcp` (stdio) from the slopp repo.
 | Extract a helper | `edit_extract` — args `{ns, from, form, name}` where `form` is the exact subform source; params (the free locals) are computed for you, placement and the call-site rewrite are handled, behavior is re-verified |
 | Delete | `edit_delete_form` |
 | Try something risky / parallel workstream | `branch_create {name}` → work normally (verified writes) → `branch_switch {name: "main"}` → `branch_merge {name}`. `query_branches` shows where you are; switching resets test-trace narrowing until the next run |
+| Split a namespace | `edit_extract_ns {ns, forms: [names], to}` — new ns created, callers rewritten to alias-qualified calls, all verified; plan the set with `query_deps {ns name}` (transitive callees) |
+| Rename a namespace | `ns_rename {old new}` — decl, requires, and fully-qualified refs across the store |
+| Clean up (declare ...)s | `fix_declares {ns}` — moves defns above callers when safe, deletes satisfied declares |
 | Merge a diverged copy of the project | `merge_from {dir}` — different-form work lands; same-form divergence returns `:conflicts` (ours kept, theirs surfaced; resolve with `edit_replace_form`) |
 
 **Batch related changes.** Verification runs per WRITE — so a feature that

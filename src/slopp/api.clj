@@ -705,6 +705,40 @@
      :forms forms
      :verification-arc arc}))
 
+(defn- callee-adjacency
+  "qsym → sorted vector of STORE-INTERNAL callee qsyms, across every ns."
+  [st]
+  (let [internal? (:namespaces st)]
+    (reduce
+     (fn [adj ns-sym]
+       (let [an (index/analyze (render/render-ns st ns-sym))]
+         (reduce (fn [adj u]
+                   (if (and (:from-var u) (internal? (:to u)))
+                     (update adj
+                             (symbol (str (:from u)) (str (:from-var u)))
+                             (fnil conj (sorted-set))
+                             (symbol (str (:to u)) (str (:name u))))
+                     adj))
+                 adj (:var-usages an))))
+     {}
+     (keys (:namespaces st)))))
+
+(defn query-deps
+  "The transitive CALLEE tree of ns/name (store-internal): what does this
+  form reach? The planning input for extractions and blast-radius checks.
+  Returns {:root q :calls {qsym [callees...]}} for every reachable form."
+  [session ns-sym nm]
+  (let [st   (:store @session)
+        adj  (callee-adjacency st)
+        root (symbol (str ns-sym) (str nm))]
+    (loop [calls {} frontier [root]]
+      (if-let [q (first frontier)]
+        (if (contains? calls q)
+          (recur calls (subvec frontier 1))
+          (let [cs (vec (get adj q []))]
+            (recur (assoc calls q cs) (into (subvec frontier 1) cs))))
+        {:root root :calls calls}))))
+
 (defn query-eval
   "Observe-only eval against the live image (the oracle): call anything —
   including effectful fns — but (re)defining code is rejected (T5); writes go
@@ -1519,6 +1553,282 @@
                        :group    gid
                        :test     summary
                        :affected (or affected :all)}))))))))))
+
+(defn fix-declares!
+  "clj-surgeon-inspired tidy: for each (declare ...) in `ns-sym`, move the
+  declared defns above their first caller when safe (the defn's own intra-ns
+  callees must already precede that point — otherwise SKIP with a reason,
+  e.g. mutual recursion), then delete declares whose every name was
+  satisfied. One atomic group, verified."
+  [session ns-sym & {:keys [prompt agent]}]
+  (let [st     (:store @session)
+        forms  (store/forms st ns-sym)
+        idx-of (into {} (map-indexed (fn [i f] [(:name f) i])
+                                     forms))
+        adj    (callee-adjacency st)
+        an     (index/analyze (render/render-ns st ns-sym))
+        decls  (filter (fn [f]
+                         (and (nil? (:name f))
+                              (= 'declare (try (first (n/sexpr (:node f)))
+                                               (catch Exception _ nil)))))
+                       forms)]
+    (if (empty? decls)
+      {:removed 0 :note "no declares"}
+      (let [[gid st0] (store/alloc-id st "g")
+            plan
+            (for [d decls
+                  nm (rest (n/sexpr (:node d)))]
+              (let [def-idx (get idx-of nm)
+                    callers (for [u (:var-usages an)
+                                  :when (and (= ns-sym (:to u))
+                                             (= nm (:name u))
+                                             (:from-var u)
+                                             (get idx-of (:from-var u)))]
+                              (get idx-of (:from-var u)))
+                    first-caller (when (seq callers) (apply min callers))
+                    my-deps (keep #(when (= (str ns-sym) (namespace %))
+                                     (get idx-of (symbol (name %))))
+                                  (get adj (symbol (str ns-sym) (str nm)) []))]
+                (cond
+                  (nil? def-idx)
+                  {:name nm :decl (:id d) :action :skip
+                   :reason "declared but never defined here"}
+
+                  (or (nil? first-caller) (< def-idx first-caller))
+                  {:name nm :decl (:id d) :action :ok}   ; already fine
+
+                  (every? #(or (= % def-idx) (< % first-caller)) my-deps)
+                  {:name nm :decl (:id d) :action :move
+                   :before (:name (nth forms first-caller))}
+
+                  :else
+                  {:name nm :decl (:id d) :action :skip
+                   :reason "its own callees sit below the caller (mutual recursion?)"})))
+            by-decl (group-by :decl plan)
+            removable (into #{}
+                            (keep (fn [[decl-id entries]]
+                                    (when (every? #(not= :skip (:action %)) entries)
+                                      decl-id)))
+                            by-decl)
+            st' (as-> st0 st*
+                  (reduce (fn [st* {:keys [action name before]}]
+                            (if (= :move action)
+                              (or (first (store/move-form st* ns-sym name before
+                                                          :prompt prompt :group gid
+                                                          :agent agent))
+                                  st*)
+                              st*))
+                          st* plan)
+                  (reduce (fn [st* decl-id]
+                            (or (first (store/remove-form st* ns-sym decl-id
+                                                          :prompt (or prompt "fix-declares")
+                                                          :group gid :agent agent))
+                                st*))
+                          st* removable))]
+        (if (and (empty? removable)
+                 (not-any? #(= :move (:action %)) plan))
+          {:removed 0 :skipped (vec (filter #(= :skip (:action %)) plan))}
+          (if-not (try-commit! session st st' [ns-sym])
+            {:conflict {:reason "store changed during fix-declares — retry"}}
+            (let [summary (run-verification! session ns-sym nil
+                                             :edited (set (map #(symbol (str ns-sym)
+                                                                        (str (:name %)))
+                                                               plan)))]
+              (commit-appended! session
+                                #(store/record-verification % ns-sym summary) [])
+              {:removed (count removable)
+               :moved   (vec (keep #(when (= :move (:action %)) (:name %)) plan))
+               :skipped (vec (filter #(= :skip (:action %)) plan))
+               :test    summary})))))))
+
+(defn ns-rename!
+  "Rename a WHOLE namespace: its ns decl, every require clause, and every
+  fully-qualified reference across the store; the namespaces map rekeys; the
+  image rebuilds fresh (old name gone); everything re-verifies."
+  [session old new & {:keys [prompt agent]}]
+  (let [st  (:store @session)
+        old (symbol (str old)) new (symbol (str new))]
+    (cond
+      (nil? (get-in st [:namespaces old]))
+      {:error (str "no namespace " old)}
+
+      (get-in st [:namespaces new])
+      {:error (str new " already exists")}
+
+      :else
+      (let [changeset (refactor/ns-rename-changeset st old new)
+            [st1 delta] (store/apply-changeset st :rename-ns old changeset
+                                               :prompt (or prompt (str "rename ns "
+                                                                       old " → " new))
+                                               :agent agent
+                                               :extra {:old old :new new})
+            st2 (update st1 :namespaces
+                        (fn [m] (-> m (dissoc old) (assoc new (get m old)))))
+            touched (vec (distinct (concat [old new]
+                                           (keep #(store/ns-of-form-id st2 %)
+                                                 (keys changeset)))))]
+        (if-not (try-commit! session st st2 touched)
+          {:conflict {:reason "store changed during ns-rename — retry"}}
+          (do
+            ;; trace map: rewrite every old/... qsym
+            (swap! session update :test-map
+                   (fn [tm]
+                     (let [fix #(if (= (str old) (namespace %))
+                                  (symbol (str new) (name %)) %)]
+                       (into {} (map (fn [[t fs]]
+                                       [(fix t) (into #{} (map fix) fs)]))
+                             tm))))
+            (fresh-image! session)          ; the old ns must NOT linger
+            (let [verify-nses (vec (remove #{old} touched))
+                  summary (run-verification! session verify-nses nil
+                                             :edited (into #{}
+                                                           (keep (fn [id]
+                                                                   (when-let [e (store/form-by-id st2 id)]
+                                                                     (symbol (str (store/ns-of-form-id st2 id))
+                                                                             (str (or (:name e) (:id e)))))))
+                                                           (keys changeset)))]
+              (commit-appended! session
+                                #(store/record-verification % verify-nses summary)
+                                [])
+              {:renamed {:old old :new new :forms (count changeset)}
+               :delta (:id delta)
+               :test summary})))))))
+
+(defn extract-ns!
+  "clj-surgeon's :extract!, slopp-grade: move `form-names` from `from-ns`
+  into BRAND-NEW `new-ns` — new ns created with from-ns's requires copied
+  (over-include is safe), remaining callers REWRITTEN to alias-qualified
+  calls, the require added, moved forms removed — one atomic group,
+  compile-gated, verified across both namespaces.
+  Guards: the moved set may not call what stays behind (move those too), and
+  nothing outside `from-ns` may reference the moved forms (v1)."
+  [session from-ns form-names new-ns & {:keys [prompt agent]}]
+  (let [st     (:store @session)
+        moved  (set (map symbol form-names))
+        missing (remove #(store/form-named st from-ns %) moved)]
+    (cond
+      (get-in st [:namespaces new-ns])
+      {:error (str new-ns " already exists")}
+
+      (seq missing)
+      {:error (str "no such forms in " from-ns ": " (vec missing))}
+
+      :else
+      (let [adj      (callee-adjacency st)
+            moved-q  (set (map #(symbol (str from-ns) (str %)) moved))
+            ;; moved forms calling what STAYS
+            stays    (for [m moved-q
+                           c (get adj m [])
+                           :when (and (= (str from-ns) (namespace c))
+                                      (not (moved-q c))
+                                      (store/form-named st from-ns
+                                                        (symbol (name c))))]
+                       (symbol (name c)))
+            ;; anything OUTSIDE from-ns referencing the moved forms
+            external (for [[q cs] adj
+                           :when (not= (str from-ns) (namespace q))
+                           c cs
+                           :when (moved-q c)]
+                       q)]
+        (cond
+          (seq stays)
+          {:error (str "moved forms still call what stays behind — move these "
+                       "too or keep them: " (vec (distinct stays)))}
+
+          (seq external)
+          {:error (str "referenced outside " from-ns " (v1 limit): "
+                       (vec (distinct external)))}
+
+          :else
+          (let [alias*   (symbol (last (clojure.string/split (str new-ns) #"\.")))
+                ns-decl  (store/form-named st from-ns from-ns)
+                requires (let [sx (n/sexpr (:node ns-decl))
+                               reqs (rest (first (filter #(and (seq? %)
+                                                               (= :require (first %)))
+                                                         sx)))]
+                           reqs)
+                new-src  (str "(ns " new-ns
+                              (when (seq requires)
+                                (str "
+  (:require "
+                                     (clojure.string/join "
+            "
+                                                          (map pr-str requires))
+                                     ")"))
+                              ")
+
+"
+                              (clojure.string/join "
+
+"
+                                                   (for [f (store/forms st from-ns)
+                                                         :when (moved (:name f))]
+                                                     (n/string (:node f))))
+                              "
+")
+                [gid st0] (store/alloc-id st "g")
+                st1 (store/ingest st0 new-ns new-src :agent agent)
+                ;; rewrite remaining callers: bare moved names → alias/name
+                mapper (fn [sym]
+                         (when (and (nil? (namespace sym)) (moved sym))
+                           (symbol (str alias*) (str sym))))
+                rewrites (into {}
+                               (for [f (store/forms st1 from-ns)
+                                     :when (and (:name f)
+                                                (not (moved (:name f)))
+                                                (not= from-ns (:name f)))
+                                     :let [node' (refactor/rewrite-symbols
+                                                  (:node f) mapper)]
+                                     :when (not= (n/string node')
+                                                 (n/string (:node f)))]
+                                 [(:id f) node']))
+                ;; require the new ns from from-ns
+                req-r (edit/add-require-source (n/string (:node ns-decl))
+                                               (str "[" new-ns " :as " alias* "]"))
+                st2 (if (:error req-r)
+                      st1
+                      (or (first (store/replace-node st1 from-ns from-ns
+                                                     (first (n/children
+                                                             (rewrite-clj.parser/parse-string-all
+                                                              (:src req-r))))
+                                                     :prompt prompt :group gid
+                                                     :agent agent))
+                          st1))
+                [st3 _] (if (seq rewrites)
+                          (store/apply-changeset st2 :extract-ns from-ns rewrites
+                                                 :prompt prompt :agent agent)
+                          [st2 nil])
+                st4 (reduce (fn [st* nm]
+                              (or (first (store/remove-form st* from-ns nm
+                                                            :prompt prompt
+                                                            :group gid :agent agent))
+                                  st*))
+                            st3 moved)
+                load-err (or (image/load-ns! (:image @session) st4 new-ns)
+                             (:err (hot-load-all!
+                                    session st4
+                                    (concat [(:id ns-decl)] (keys rewrites)))))]
+            (if load-err
+              (do (fresh-image! session)
+                  {:error (str "extract-ns failed to compile: " load-err)})
+              (if-not (try-commit! session st st4 [from-ns new-ns])
+                {:conflict {:reason "store changed during extract-ns — retry"}}
+                (do (doseq [nm moved]
+                      (repl/eval! (:image @session)
+                                  (format "(ns-unmap '%s '%s)" from-ns nm)))
+                    (let [summary (run-verification! session [from-ns new-ns] nil
+                                                     :edited (into moved-q
+                                                                   (map #(symbol (str new-ns) (str %)))
+                                                                   moved))]
+                      (commit-appended! session
+                                        #(store/record-verification
+                                          % [from-ns new-ns] summary)
+                                        [])
+                      {:extracted-to new-ns
+                       :moved (vec (sort moved))
+                       :rewrote (count rewrites)
+                       :group gid
+                       :test summary}))))))))))
 
 (defn- merge-into-session!
   "Shared merge pipeline (m2 forks + m3 branches): replay `theirs` onto the

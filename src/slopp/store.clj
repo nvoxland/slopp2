@@ -153,9 +153,11 @@
   [store' delta], or nil if no such form."
   [store ns-sym nm & {:keys [prompt group agent]}]
   (let [elems (get-in store [:namespaces ns-sym :elements])
-        idx   (first (keep-indexed
-                      (fn [i e] (when (and (= :form (:kind e)) (= nm (:name e))) i))
-                      elems))]
+        ;; a STRING nm removes by form id (anonymous forms, e.g. declares)
+        hit?  (if (string? nm)
+                (fn [e] (= nm (:id e)))
+                (fn [e] (and (= :form (:kind e)) (= nm (:name e)))))
+        idx   (first (keep-indexed (fn [i e] (when (hit? e) i)) elems))]
     (when idx
       (let [fid          (:id (nth elems idx))
             drop-next?   (and (< (inc idx) (count elems))

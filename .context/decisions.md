@@ -239,6 +239,23 @@ the change here (same commit).
   server absorbs them via m5b sync, so the model never has to relay its own
   instructions. A turn may end red — failed turns are history too.
 
+- **SG — clj-surgeon-inspired structural ops (user-directed borrow).**
+  Compared against realgenekim/clj-surgeon (stateless babashka file
+  surgery): its outline/mv we had richer; its cross-repo `:ls-tree` and CLJC
+  family are out of scope (multi-repo files; no cljs image). Borrowed the
+  four missing OPS, each stronger here (gated+verified+recorded vs "run
+  your tests after"): `query_deps` (transitive callee tree — the planning
+  input), `fix_declares` (move defns above callers when safe, delete
+  satisfied declares, skip mutual recursion), `ns_rename` (decl + requires +
+  FQ refs across the store, rekey, elements purged for the old ns — append!
+  now deletes rows for nses absent from the store), `edit_extract_ns`
+  (namespace split: new ns with copied requires, remaining callers rewritten
+  to alias-qualified calls, require added, moved forms removed — one atomic
+  verified group; guards: moved set may not call what stays, no external
+  referencers (v1)). Caller rewriting is symbol-mapping (zipper), not
+  position-based: local shadowing of moved fn NAMES is the known v1 edge.
+  remove-form accepts a string form-ID (anonymous forms like declares).
+
 ## H — host
 
 - **H1 — slopp itself is Clojure/JVM** (same runtime as image + tooling; no

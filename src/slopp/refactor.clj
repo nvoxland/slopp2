@@ -102,6 +102,48 @@
              [(str (subs (ls (dec sr)) 0 (dec sc)) repl (subs (ls (dec er)) (dec ec)))]
              (subvec ls er)))))
 
+(defn rewrite-symbols
+  "Zipper-walk `node`, replacing symbol tokens via `f` (sym → sym|nil).
+  Returns the (possibly identical) node."
+  [node f]
+  (loop [zl (z/of-node node)]
+    (let [zl (if (and (= :token (z/tag zl))
+                      (symbol? (z/sexpr zl)))
+               (if-let [s' (f (z/sexpr zl))]
+                 (z/replace zl s')
+                 zl)
+               zl)
+          nxt (z/next zl)]
+      (if (z/end? nxt)
+        (z/root zl)
+        (recur nxt)))))
+
+(defn ns-sym-mapper
+  "Symbol rewriter old-ns → new-ns: the ns name itself, and any
+  old-ns/qualified symbol."
+  [old new]
+  (let [o (str old) n (str new)]
+    (fn [sym]
+      (cond
+        (= sym old) new
+        (and (namespace sym) (= o (namespace sym)))
+        (symbol n (name sym))
+        (clojure.string/starts-with? (str sym) (str o "/"))
+        (symbol (str n (subs (str sym) (count o))))
+        :else nil))))
+
+(defn ns-rename-changeset
+  "Every form in the STORE mentioning `old` as a namespace — its own ns decl,
+  require clauses, fully-qualified refs — rewritten to `new`. {form-id node}."
+  [store old new]
+  (let [mapper (ns-sym-mapper old new)]
+    (into {}
+          (for [ns-sym (keys (:namespaces store))
+                e (store/forms store ns-sym)
+                :let [node' (rewrite-symbols (:node e) mapper)]
+                :when (not= (n/string node') (n/string (:node e)))]
+            [(:id e) node']))))
+
 (defn- find-unique-subform
   "The unique position-tracked zloc in `form-src` whose sexpr structurally
   equals `match-src`'s (shared by extract and subform edits). Returns

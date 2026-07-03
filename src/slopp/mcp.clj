@@ -219,6 +219,31 @@
    {:name "query_branches"
     :description "List every branch with its head delta, and which one is current."
     :inputSchema {:type "object" :properties {}}}
+   {:name "query_deps"
+    :description "The transitive CALLEE tree of ns/name: what does this form reach (store-internal)? Plan extractions and blast radius with it."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :name {:type "string"}}
+                  :required ["ns" "name"]}}
+   {:name "fix_declares"
+    :description "Tidy a namespace's (declare ...) forms: move declared defns above their first caller when safe, delete satisfied declares; unsafe cases (mutual recursion) are skipped and reported. Atomic, verified."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :prompt {:type "string"}
+                               :agent {:type "string"}}
+                  :required ["ns"]}}
+   {:name "ns_rename"
+    :description "Rename a WHOLE namespace: its ns decl, every require clause, and every fully-qualified reference across the store. Verified end-to-end; the old name is gone."
+    :inputSchema {:type "object"
+                  :properties {:old {:type "string"} :new {:type "string"}
+                               :prompt {:type "string"} :agent {:type "string"}}
+                  :required ["old" "new"]}}
+   {:name "edit_extract_ns"
+    :description "Move forms into a BRAND-NEW namespace: new ns created (requires copied), remaining callers rewritten to alias-qualified calls, require added, moved forms removed — one atomic verified group. Guards: the moved set may not call what stays; nothing outside the source ns may reference it. Use query_deps to plan the set."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"}
+                               :forms {:type "array" :items {:type "string"}}
+                               :to {:type "string"} :prompt {:type "string"}
+                               :agent {:type "string"}}
+                  :required ["ns" "forms" "to"]}}
    {:name "merge_from"
     :description "Merge a diverged COPY of this project (a fork = a copied project dir, edited by its own slopp server) back into this session. Different-form work lands; same-form divergence returns :conflicts (ours kept, theirs surfaced). Absolute dir path."
     :inputSchema {:type "object"
@@ -486,6 +511,21 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
       "branch_merge"      (text (api/branch-merge! session (:name a)))
       "branch_delete"     (text (api/branch-delete! session (:name a)))
       "query_branches"    (text (api/query-branches session))
+      "query_deps"        (text (api/query-deps session (sym :ns) (sym :name)))
+      "fix_declares"      (text (api/fix-declares! session (sym :ns)
+                                                   :prompt (:prompt a)
+                                                   :agent (:agent a)))
+      "ns_rename"         (text (api/ns-rename! session (:old a) (:new a)
+                                                :prompt (:prompt a)
+                                                :agent (:agent a)))
+      "edit_extract_ns"   (text (-> (api/extract-ns! session (sym :ns)
+                                                     (mapv symbol (:forms a))
+                                                     (symbol (:to a))
+                                                     :prompt (:prompt a)
+                                                     :agent (:agent a))
+                                    (select-keys [:error :conflict :extracted-to
+                                                  :moved :rewrote :test :group])
+                                    (summarize (:verbose a))))
       "merge_from"        (text (api/merge! session (:dir a)))
       "restart"           (do (api/restart! session) (text "restarted"))
       "build"             (text (api/build! session (:dir a)
