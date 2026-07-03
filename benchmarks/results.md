@@ -82,3 +82,40 @@ Also: agents invented plausible tools (help, ns_remove_require) -- add the
 symmetric ops or suggest nearest-tool in the unknown-tool error.
 Waves 2-3 (inventory, wordstats) deferred until S1/S2 are fixed -- rerunning
 known defects wastes runs.
+
+## Symmetric eval, waves 2-3: post-S1/S2 fixes (inventory + wordstats, @ 903214c)
+
+Same protocol; the compile-gate (S1), edit_move, ns_remove_require, and
+tool-listing errors were in place. All six runs ended green with the rename
+step verified.
+
+| model | app | workflow | true tokens | duration | tool calls | payload in/out |
+|---|---|---|---|---|---|---|
+| haiku  | inventory | Go    | 19,543 | 82s  | 15 | 515/52 |
+| haiku  | inventory | slopp | **18,878** | **56s** | **10** | 316/147 |
+| sonnet | inventory | Go    | 24,746 | 89s  | 16 | 685/53 |
+| sonnet | inventory | slopp | 30,137 | 145s | 20 | 864/948 |
+| opus   | inventory | Go    | 18,483 | 91s  | 16 | 587/17 |
+| opus   | inventory | slopp | 21,224 | 97s  | 16 | 357/155 |
+| haiku  | wordstats | Go    | 25,654 | 132s | 24 | 2369/210 |
+| haiku  | wordstats | slopp | 41,908 | 381s | 62 | 1955/1473 |
+| sonnet | wordstats | Go    | 24,787 | 82s  | 15 | 1013/75 |
+| sonnet | wordstats | slopp | 34,722 | 179s | 26 | 1058/1169 |
+| opus   | wordstats | Go    | 18,625 | 85s  | 11 | 785/75 |
+| opus   | wordstats | slopp | 22,266 | 128s | 17 | 440/278 |
+
+Read:
+- The S1 compile-gate transformed the weak-model experience: haiku went from
+  +114% (wave 1) to BEATING its Go baseline outright on inventory (-3% tokens,
+  -32% wall, fewest calls of any run). Overall slopp overhead fell from
+  +25..114% (wave 1) to -3..+63% (waves 2-3).
+- Remaining measured frictions, all fixable: (1) edit_rename arg-key guessing
+  cost every sonnet/opus run retries ("no conversion to symbol" raw error);
+  (2) red-first TDD fights the compile-gate -- agents stub-danced; the
+  idiomatic answer ((declare f) -> test -> honest red) needs to be taught in
+  SKILL.md; (3) fixed overhead: SKILL.md read + curl envelope ~2-3k tokens/run.
+- haiku/wordstats remains the outlier (62 calls): weak-model thrash on the
+  sort-by-descending logic, not a product defect (its Go run also took 24).
+- Payload inputs: slopp lower in 5 of 6 runs (form-writes vs whole-file
+  rewrites). Payload outputs remain higher (structured verification vs silent
+  green) -- by design, and B1 keeps quiet greens small.
