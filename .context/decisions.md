@@ -118,6 +118,21 @@ seeds the trace map, so narrowing works from the first edit). Deferred
 verification / whole-ns overwrite remain off the table. The scale side of the
 fork (10+-namespace eval, too big to read whole) is the next experiment. Data: benchmarks/results.md; report: projects/eval2/REPORT.md.
 
+## X/N — eval round 3 (scale) findings
+
+X2 ✅ rename hot-loads the renamed DEF first (hash-order destroyed cross-ns
+renames) · X3 ✅ image loads follow `store/ns-dependency-order` (topological;
+map-key order went hash past 8 nses and silently half-loaded images from
+`open!`) and failures throw loudly · X4 ✅ `build!` guarded (absolute paths
+only, never a dir enclosing the running process, never clobber an existing
+deps.edn — an eval agent built into the host repo) · N1 ✅ `!`-named callees
+count as effectful anchors (cross-ns effect propagation).
+**Round-3b verdict (the crossover, measured):** at 12-ns scale, slopp beat
+files on aggregate tokens (−9%) and tool calls (104 vs 155); sonnet −42%
+tokens vs its files baseline; files' costs grew +54% avg with scale while
+slopp's stayed flat-to-down. Full data: benchmarks/results.md,
+projects/eval3/RUNS.md.
+
 ## B — benchmark/baseline findings
 
 B1 ✅ **terse green responses** (from the Go-baseline comparison): MCP write

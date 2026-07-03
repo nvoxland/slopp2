@@ -28,6 +28,15 @@
         (is (= 1 (count refs)))
         (is (= 'caller (:from-var (first refs))))))))
 
+(deftest cross-ns-bang-callees-propagate-effects       ; N1
+  (let [an (index/analyze
+            (str "(ns w (:require [other.store :as st]))\n"
+                 "(defn save-all [xs] (doseq [x xs] (st/put! x)))\n"
+                 "(defn pure-view [xs] (map :id xs))\n"))]
+    (is (contains? (index/effectful-vars an) 'w/save-all))
+    (is (not (contains? (index/effectful-vars an) 'w/pure-view)))
+    (is (some #(= 'w/save-all (:var %)) (index/effect-violations an)))))
+
 (deftest deftests-are-exempt-from-bang-rule            ; T1
   (let [an (index/analyze
             (str "(ns d (:require [clojure.test :refer [deftest is]]))\n"

@@ -59,12 +59,21 @@
           {}
           (:var-usages analysis)))
 
+(defn- bang-target?
+  "A call target whose NAME is bang-marked counts as an effectful anchor (D6:
+  '...or another ! function') — this is what carries effectfulness across
+  namespace boundaries, since analysis is per-namespace (N1)."
+  [target]
+  (str/ends-with? (name target) "!"))
+
 (defn effectful-vars
-  "Set of user var nodes that transitively reach an effectful leaf (D6).
-  Monotonic fixpoint — cycle-safe."
+  "Set of user var nodes that transitively reach an effectful leaf OR a
+  bang-named callee (D6). Monotonic fixpoint — cycle-safe."
   [analysis]
   (let [edges (call-graph analysis)]
-    (loop [eff (set (for [[n ts] edges :when (some effectful-leaves ts)] n))]
+    (loop [eff (set (for [[n ts] edges
+                          :when (some #(or (effectful-leaves %) (bang-target? %)) ts)]
+                      n))]
       (let [eff' (into eff (for [[n ts] edges :when (some eff ts)] n))]
         (if (= eff eff') eff (recur eff'))))))
 
