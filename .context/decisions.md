@@ -70,7 +70,9 @@ the change here (same commit).
 F1 failure-details in results ✅ · F2 atomic edit groups ✅ (calculator bench
 −49% wall) · F3 `{:error}` on unparseable source ✅ · F4 `create-ns!`/
 `ns_create` ✅ · F5 `add-require!`/`ns_add_require` ✅ (structural, dup-checked)
-· F6 form-mapped stack traces (open) · F7 stdout-vs-`!` scope decision (open —
-needs user) · F8 polish (ingest tidy-return ✅; `:affected` distinction +
-build-scaffold open).
+· F6 VFS-mapped stack traces ✅ (nREPL load-file + row padding; frames cite the
+exact lines `query-source` shows) · F7 stdout-vs-`!` scope decision (open —
+needs user; recommendation: keep `!` = mutation per Clojure convention, surface
+console IO separately if ever needed) · F8 ✅ (ingest tidy-return; `:untested`
+flag on edits no test exercises; `build!` emits `src/` + minimal `deps.edn`).
 Details: `projects/calculator/REPORT.md` (untracked) and `.context/dogfooding.md`.

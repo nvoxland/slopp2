@@ -4,6 +4,7 @@
   the process away for a guaranteed-faithful fresh image — the correctness
   backstop. Phase-1 uses plain restart; the warm-spare optimization is deferred."
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [nrepl.core :as nrepl])
   (:import [java.io BufferedReader]
            [java.nio.file Files]
@@ -72,6 +73,17 @@
   return unreadable objects — namespaces, functions — don't blow up)."
   [{:keys [client session]} code]
   (->> (nrepl/message client {:op "eval" :code code :session session})
+       (keep :value)
+       (mapv (fn [v] (try (read-string v) (catch Exception _ v))))))
+
+(defn load!
+  "Load `src` into the image attributed to `path` (VFS coordinates) via nREPL's
+  load-file op — stack traces then cite the VFS file/line instead of
+  NO_SOURCE_FILE (F6)."
+  [{:keys [client session]} src path]
+  (->> (nrepl/message client {:op "load-file" :file src :file-path path
+                              :file-name (subs path (inc (or (str/last-index-of path "/") -1)))
+                              :session session})
        (keep :value)
        (mapv (fn [v] (try (read-string v) (catch Exception _ v))))))
 

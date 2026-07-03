@@ -95,6 +95,23 @@
          :warnings (ns-warnings store' ns-sym)}
         {:error (str "no form named " form-name " in " ns-sym)}))))
 
+(defn hot-load-form!
+  "Hot-reload one COMMITTED form into the image, padded with newlines to its
+  VFS row and attributed to its VFS path — so stack traces keep citing the
+  exact lines `query-source` shows (F6)."
+  [image store form-id]
+  (let [ns-sym  (store/ns-of-form-id store form-id)
+        elems   (store/elements store ns-sym)
+        idx     (first (keep-indexed
+                        (fn [i e] (when (= form-id (:id e)) i)) elems))
+        [row _] (nth (render/element-offsets store ns-sym) idx)
+        src     (n/string (:node (nth elems idx)))
+        padded  (if (>= row 2)
+                  (str "(in-ns '" ns-sym ")\n"
+                       (apply str (repeat (- row 2) "\n")) src)
+                  (str "(in-ns '" ns-sym ") " src))]
+    (repl/load! image padded (render/ns-path ns-sym))))
+
 (defn apply-replace!
   "Pipeline through hot-reload over `system` {:store store :image handle}:
   `replace-form`, then on success redefine the form in the live image (D5).
@@ -103,9 +120,7 @@
   (let [r (replace-form (:store system) ns-sym form-name new-source :prompt prompt)]
     (if (:error r)
       r
-      (let [image (:image system)]
-        (repl/eval! image (format "(in-ns '%s)" ns-sym))
-        (repl/eval! image new-source)                 ; hot-redefine the var
-        {:system   (assoc system :store (:store r))
-         :delta    (:delta r)
-         :warnings (:warnings r)}))))
+      (do (hot-load-form! (:image system) (:store r) (:form-id (:delta r)))
+          {:system   (assoc system :store (:store r))
+           :delta    (:delta r)
+           :warnings (:warnings r)}))))

@@ -220,13 +220,15 @@
       (let [_        (reset! session (:system r))
             _        (persist-last! session)          ; the :replace delta
             affected (affected-tests session ns-sym nm)
+            untested (and (nil? affected) (seq (:test-map @session)))
             summary  (run-verification! session ns-sym affected)]
         (swap! session update :store store/record-verification ns-sym summary)
         (persist-last! session)                       ; the :verify delta
-        {:delta    (:delta r)
-         :warnings (:warnings r)
-         :test     summary
-         :affected (or affected :all)}))))
+        (cond-> {:delta    (:delta r)
+                 :warnings (:warnings r)
+                 :test     summary
+                 :affected (or affected :all)}
+          untested (assoc :untested true))))))
 
 (defn add-form!
   "Add a new top-level form to `ns-sym` (O1 base write): dialect gate, `:add`
@@ -246,9 +248,7 @@
                                               :prompt prompt)]
         (do (swap! session assoc :store st')
             (persist-last! session)
-            (let [image (:image @session)]
-              (repl/eval! image (format "(in-ns '%s)" ns-sym))
-              (repl/eval! image source))
+            (edit/hot-load-form! (:image @session) st' (:form-id delta))
             (let [affected (when nm (affected-tests session ns-sym nm))
                   summary  (run-verification! session ns-sym affected)]
               (swap! session update :store store/record-verification ns-sym summary)
@@ -286,7 +286,7 @@
                  {:error error}
                  (if-let [[st' d] (store/replace-node st ns name node
                                                       :prompt prompt :group gid)]
-                   {:store st' :delta d :hot [:eval ns source]}
+                   {:store st' :delta d :hot [:load (:form-id d)]}
                    {:error (str "no form named " name " in " ns)})))
     :add     (let [{:keys [node error]} (edit/parse-form source)
                    nm (some-> node store/form-symbol)]
@@ -297,7 +297,7 @@
                  :else
                  (if-let [[st' d] (store/append-form st ns node
                                                      :prompt prompt :group gid)]
-                   {:store st' :delta d :hot [:eval ns source]}
+                   {:store st' :delta d :hot [:load (:form-id d)]}
                    {:error (str "no namespace " ns " (ingest it first)")})))
     :delete  (if-let [[st' d] (store/remove-form st ns name
                                                  :prompt prompt :group gid)]
@@ -330,11 +330,10 @@
                 _        (doseq [d deltas]
                            (when db (db/persist! db st d)))
                 image    (:image @session)
-                _        (doseq [[kind ns-sym x] hots]
+                _        (doseq [[kind a b] hots]
                            (case kind
-                             :eval  (do (repl/eval! image (format "(in-ns '%s)" ns-sym))
-                                        (repl/eval! image x))
-                             :unmap (repl/eval! image (format "(ns-unmap '%s '%s)" ns-sym x))))
+                             :load  (edit/hot-load-form! image st a)
+                             :unmap (repl/eval! image (format "(ns-unmap '%s '%s)" a b))))
                 ;; affected = union across steps; any unknown → conservative full run
                 per-step (map (fn [{:keys [action ns name source]}]
                                 (let [nm (case action
@@ -439,11 +438,8 @@
           (db/persist! db st' delta touched-nses))
         ;; hot-reload every rewritten form in its namespace; drop the old var
         (let [image (:image @session)]
-          (doseq [id (keys changeset)
-                  :let [e   (store/form-by-id st' id)
-                        ens (store/ns-of-form-id st' id)]]
-            (repl/eval! image (format "(in-ns '%s)" ens))
-            (repl/eval! image (n/string (:node e))))
+          (doseq [id (keys changeset)]
+            (edit/hot-load-form! image st' id))
           (repl/eval! image (format "(ns-unmap '%s '%s)" ns-sym old-name)))
         (let [summary (run-verification! session ns-sym affected)]
           (swap! session update :store store/record-verification ns-sym summary)
@@ -454,11 +450,13 @@
            :affected (or affected :all)})))))
 
 (defn build!
-  "C1/C6 explicit build: materialize every namespace's current source to real
-  `.clj` files under `dir`. Returns `dir`."
+  "C1/C6 explicit build: materialize a runnable project under `dir` —
+  `src/<ns-path>.clj` for every namespace plus a minimal `deps.edn` (F8), so
+  the output runs with plain `clojure -M -e ...` from `dir`."
   [session dir]
   (doseq [ns-sym (keys (:namespaces (:store @session)))]
-    (let [file (io/file dir (str (str/replace (str ns-sym) "." "/") ".clj"))]
+    (let [file (io/file dir "src" (render/ns-path ns-sym))]
       (io/make-parents file)
       (spit file (render/render-ns (:store @session) ns-sym))))
+  (spit (io/file dir "deps.edn") "{:paths [\"src\"]}\n")
   dir)

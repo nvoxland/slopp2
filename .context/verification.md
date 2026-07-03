@@ -39,9 +39,11 @@ The oracle must never return a false verdict. Everything here serves that.
 
 - `clojure.test/*test-out*` does NOT follow `with-out-str` — this is exactly
   why rt captures report events instead of parsing output.
-- Image stack traces currently say `NO_SOURCE_FILE:<line>` for form-eval'd
-  code (F6 open): fix direction is loading rendered source via
-  `Compiler/load` with a virtual path so traces map to VFS lines.
+- Image stack traces cite VFS file+line (F6): namespaces load via nREPL's
+  `load-file` op with `render/ns-path`; hot-reloaded forms go through
+  `edit/hot-load-form!`, which pads the form with newlines to its current VFS
+  row. If you add a new write path, use `hot-load-form!` — a plain `eval!`
+  regresses traces to NO_SOURCE_FILE.
 - Multi-form refactors must go through `edit-group!` (F2): single-form edits
   verify immediately, so sequencing them hits a meaningless mid-refactor red +
   a diagnostic restart between edits (measured: −49% calculator wall time when

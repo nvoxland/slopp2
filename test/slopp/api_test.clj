@@ -36,5 +36,6 @@
         (let [dir (str (Files/createTempDirectory "slopp-build"
                                                   (make-array FileAttribute 0)))]
           (api/build! sess dir)
-          (is (= (api/query-source sess 'demo) (slurp (str dir "/demo.clj"))))))
+          (is (= (api/query-source sess 'demo) (slurp (str dir "/src/demo.clj"))))
+          (is (.exists (clojure.java.io/file dir "deps.edn")))))
       (finally (api/close! sess)))))

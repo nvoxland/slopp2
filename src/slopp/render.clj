@@ -12,6 +12,12 @@
   [store ns-sym]
   (apply str (map (comp n/string :node) (store/elements store ns-sym))))
 
+(defn ns-path
+  "The VFS path of a namespace's rendered file (also used by build! and as the
+  source-path for image loads, so stack traces cite VFS coordinates — F6)."
+  [ns-sym]
+  (str (-> (str ns-sym) (str/replace "-" "_") (str/replace "." "/")) ".clj"))
+
 (defn element-offsets
   "Start position [row col] (1-based) of each of `ns-sym`'s elements within the
   rendered source — the bridge from index positions (clj-kondo rows/cols against
