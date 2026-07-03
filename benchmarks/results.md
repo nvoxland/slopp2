@@ -183,3 +183,25 @@ verification pricing vs batched intents at small scales (files' advantage
 here was BATCHING, which edit_group already offers but agents underused).
 Caveat: files-sonnet used an nREPL (inherited user config) instead of cold
 `clojure -M` per cycle, flattering its wall time somewhat.
+
+## Eval round 3: SCALE (12-ns orders domain, rush-handling task, @ 23670e4)
+
+Files cohort: 3/3 acceptance pass — haiku 36.3k/192s/40, opus 47.2k/283s/43,
+sonnet 79.2k/403s/72. Scale DID tax files (opus +79% vs its round-2 cost).
+
+slopp cohort: sabotaged from minute zero by two scale-only product bugs the
+round existed to flush out (all sessions opened against a HALF-LOADED image):
+- X3: open!/fresh-image! load namespaces in map-key order; >8 namespaces =
+  unordered hash map -> requires hit the no-classpath hole -> SIX namespaces
+  silently absent from the image (and restart repeats the damage).
+- X2: rename! hot-loads its changeset in hash-map key order -> callers can
+  reload before the renamed def exists -> compile fail, destructive.
+Outcomes against that: sonnet PASS (161.8k/1539s/121 — diagnosed + hand-
+rehydrated the image), opus PASS (144.6k/1521s/87 — diagnosed both bugs),
+haiku FAIL acceptance (78.6k/970s/137 — inlined five namespaces' logic into
+process-order! to escape, losing the rush-shipping rule).
+
+Verdict: round 3 is defect-dominated, not thesis-answering. Notable even so:
+two of three slopp agents delivered correct cross-cutting results against a
+broken image, with correct provenance; the files cohort's costs grew with
+scale as predicted. Round 3b (rerun post-fix) is the real terrain test.
