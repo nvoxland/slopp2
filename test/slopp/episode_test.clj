@@ -3,6 +3,7 @@
   from the journal (no tagging), PER-AGENT so parallel sub-agents don't
   collapse into one braid, with a shared-form guard on revert."
   (:require [clojure.test :refer [deftest is testing]]
+            [slopp.store :as store]
             [slopp.api :as api]))
 
 (def seed
@@ -89,4 +90,33 @@
           (is (re-find #":bob-touched" (api/query-source sess 'ep.core))))
         (testing "the revert is itself provenance, and tests are green again"
           (is (zero? (+ (:fail (:test r)) (:error (:test r)))))))
+      (finally (api/close! sess)))))
+
+(deftest turn-trees-from-label-paths                    ; P4-m6.1
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'ep.core seed)
+      (api/checkpoint! sess :label "baseline" :agent "alice")
+      ;; alice's turn: her own edit + two sub-agents she spawned
+      (api/edit-replace! sess 'ep.core 'f "(defn f [x] (+ x 1))"
+                         :prompt "alice's own step" :agent "alice")
+      (api/edit-replace! sess 'ep.core 'g "(defn g [x] (- x 9))"
+                         :prompt "sub tests work" :agent "alice/tests")
+      (api/edit-replace! sess 'ep.core 'h "(defn h [x] :sub-impl)"
+                         :prompt "sub impl work" :agent "alice/impl")
+      (api/checkpoint! sess :label "alice turn done" :agent "alice")
+      (testing "the collapsed history nests sub-agent episodes under the turn"
+        (let [rows   (api/query-history sess :collapse true)
+              alice  (first (filter #(= "alice turn done"
+                                        (get-in % [:episode :label]))
+                                    rows))
+              kids   (set (map :agent (get-in alice [:episode :children])))]
+          (is (some? alice))
+          (is (= #{"alice/tests" "alice/impl"} kids))
+          (testing "children don't ALSO appear as top-level rows"
+            (is (not-any? #(= "alice/tests" (get-in % [:episode :agent]))
+                          rows)))))
+      (testing "deltas carry wall-clock provenance"
+        (is (number? (:at (last (store/deltas (:store @sess))))))
+        (is (every? #(number? (:at %)) (store/deltas (:store @sess)))))
       (finally (api/close! sess)))))

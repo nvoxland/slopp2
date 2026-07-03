@@ -400,16 +400,42 @@
                                          (nil? agent) (dissoc :agent))})
                             out))))
                     (group-by :agent relevant))]
-      (->> rows
-           (sort-by #(- (get pos (or (get-in % [:episode :to])
-                                     (get-in % [:episode :from])))))
-           (filter #(or (nil? contains)
-                        (clojure.string/includes?
-                         (str (get-in % [:episode :label]) " "
-                              (get-in % [:episode :agent]))
-                         contains)))
-           (take limit)
-           vec))
+      (let [parent-of (fn [agent]
+                        (when-let [i (and agent
+                                          (clojure.string/last-index-of agent "/"))]
+                          (subs agent 0 i)))
+            contains?* (fn [p c]        ; child's span inside parent's span
+                         (let [pf (get pos (get-in p [:episode :from]) 0)
+                               pt (get pos (get-in p [:episode :to])
+                                       Long/MAX_VALUE)
+                               cf (get pos (get-in c [:episode :from]) 0)]
+                           (and (<= pf cf) (<= cf pt))))
+            kids   (filter #(parent-of (get-in % [:episode :agent])) rows)
+            tops   (remove #(parent-of (get-in % [:episode :agent])) rows)
+            nested (mapv (fn [p]
+                           (let [cs (filterv #(and (= (parent-of
+                                                       (get-in % [:episode :agent]))
+                                                      (get-in p [:episode :agent]))
+                                                   (contains?* p %))
+                                             kids)]
+                             (if (seq cs)
+                               (update p :episode assoc :children
+                                       (mapv :episode cs))
+                               p)))
+                         tops)
+            ;; orphans: children whose parent episode isn't in view
+            claimed (into #{} (mapcat #(get-in % [:episode :children])) nested)
+            orphans (remove #(claimed (:episode %)) kids)]
+        (->> (concat nested orphans)
+             (sort-by #(- (get pos (or (get-in % [:episode :to])
+                                       (get-in % [:episode :from])))))
+             (filter #(or (nil? contains)
+                          (clojure.string/includes?
+                           (str (get-in % [:episode :label]) " "
+                                (get-in % [:episode :agent]))
+                           contains)))
+             (take limit)
+             vec)))
     (->> (store/deltas (:store @session))
          reverse
          (filter #(or (nil? ns) (= ns (:ns %))))

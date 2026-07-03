@@ -17,6 +17,8 @@
 (defn empty-store []
   {:namespaces {} :deltas [] :next-id 0})
 
+(defn- now-ms [] (System/currentTimeMillis))
+
 (defn- gen-id [store prefix]
   (let [i (:next-id store)]
     [(str prefix i) (assoc store :next-id (inc i))]))
@@ -59,6 +61,7 @@
               (assoc-in [:namespaces ns-sym :elements] elements)
               (update :deltas conj
                       (cond-> {:id did :parent nil :op :ingest :ns ns-sym
+                               :at (now-ms)
                                :form-ids (into [] (keep :id) elements)
                                ;; per-version content (C3/C4): history must be
                                ;; reconstructible from the log alone
@@ -109,6 +112,7 @@
             [did store] (gen-id store "d")
             delta    (cond-> {:id did :parent (:id (last (:deltas store)))
                               :op op :ns ns-sym :form-id (:id elem) :prompt prompt
+                              :at (now-ms)
                               :sources {(:id elem) (n/string node)}}
                        group (assoc :group group)
                        agent (assoc :agent agent))]
@@ -134,6 +138,7 @@
                                          {:kind :sep :node (n/newlines 1)}))
           delta        (cond-> {:id did :parent (:id (last (:deltas store)))
                                 :op :add :ns ns-sym :form-id fid :prompt prompt
+                                :at (now-ms)
                                 :sources {fid (n/string node)}}
                          group (assoc :group group)
                          agent (assoc :agent agent))]
@@ -161,7 +166,7 @@
             delta        (cond-> {:id did :parent (:id (last (:deltas store)))
                                   :op :delete :ns ns-sym :form-id fid :name nm
                                   :removed-source (n/string (:node (nth elems idx)))
-                                  :prompt prompt}
+                                  :prompt prompt :at (now-ms)}
                            group (assoc :group group)
                            agent (assoc :agent agent))]
         [(-> store'
@@ -196,7 +201,7 @@
             delta (cond-> {:id did :parent (:id (last (:deltas store)))
                            :op :move :ns ns-sym
                            :form-id (:id (nth elems i)) :before before-nm
-                           :prompt prompt}
+                           :prompt prompt :at (now-ms)}
                     group (assoc :group group)
                     agent (assoc :agent agent))]
         [(-> store'
@@ -262,7 +267,7 @@
   [store op ns-sym changeset & {:keys [prompt extra agent]}]
   (let [[did store'] (gen-id store "d")
         delta (merge (cond-> {:id did :parent (:id (last (:deltas store)))
-                              :op op :ns ns-sym
+                              :op op :ns ns-sym :at (now-ms)
                               :form-ids (vec (sort (keys changeset)))
                               :sources  (into {} (map (fn [[fid node]]
                                                         [fid (n/string node)]))
@@ -288,7 +293,7 @@
   (let [[did store'] (gen-id store "d")]
     [(update store' :deltas conj
              (cond-> {:id did :parent (:id (last (:deltas store)))
-                      :op :checkpoint :ns '*session*}
+                      :op :checkpoint :ns '*session* :at (now-ms)}
                label (assoc :label label)
                agent (assoc :agent agent)))
      did]))
@@ -314,7 +319,8 @@
   (let [parent (:id (last (:deltas store)))
         [did store] (gen-id store "d")]
     (update store :deltas conj
-            {:id did :parent parent :op :verify :ns ns-sym :result result})))
+            {:id did :parent parent :op :verify :ns ns-sym :at (now-ms)
+             :result result})))
 
 ;; --- Phase 4 m2: the CRDT merge -------------------------------------------
 
@@ -341,7 +347,7 @@
   (let [[did store'] (gen-id store "d")
         delta (cond-> {:id did :parent (:id (last (:deltas store)))
                        :op :merge :ns '*session* :from (str from)
-                       :merged merged}
+                       :at (now-ms) :merged merged}
                 (seq applied)   (assoc :applied (vec applied))
                 (seq id-map)    (assoc :id-map id-map)
                 (seq conflicts) (assoc :conflicts (mapv #(dissoc % :ours) conflicts))

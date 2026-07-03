@@ -213,6 +213,17 @@ the change here (same commit).
   Discipline: parallel sub-agents MUST carry distinct :agent labels (SKILL).
   Deferred: isolation-until-stable as an opt-in built on real branches.
 
+- **P4-m6.1 — Turn trees: label paths + timestamps (user-probed).** slopp
+  can't observe conversational turns (it sees tool calls); the parent
+  agent's checkpoint-bounded episode is the turn proxy. Hierarchy comes from
+  the LABEL CONVENTION `parent/child` on sub-agents (set once at spawn —
+  already required for episode independence): the collapsed history nests a
+  child episode under the parent episode whose span contains it (orphans
+  stay top-level). Every delta now carries `:at` (epoch ms) for forensic
+  time — shared prefixes stay value-identical (copied), and replayed deltas
+  differing by :at is fine because causal delivery, not value-identity,
+  governs iterated merges.
+
 ## H — host
 
 - **H1 — slopp itself is Clojure/JVM** (same runtime as image + tooling; no
