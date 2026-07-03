@@ -23,6 +23,12 @@ by convention it must not redefine code; redefinition belongs to edit ops).
 - `edit-replace!` — whole-form replace (O1); the common "semantic patch" path.
 - `add-form!` / `delete-form!` — grow/shrink a namespace (delete `ns-unmap`s).
 - `rename!` — coordinated multi-form rename; see `slopp.refactor` notes below.
+- `edit-group!` — several `:replace`/`:add`/`:delete` steps as ONE atomic
+  intent (F2): all steps apply to a store VALUE first (any error → whole group
+  rejected, nothing committed — store purity makes this free), then commit +
+  persist + hot-reload together and verify ONCE. Deltas share a `:group` id.
+  Use for every multi-form refactor — it avoids the mid-refactor red + wasted
+  diagnostic restart.
 - `test-run!` — full traced+diagnosed run; refreshes the trace map.
 - `restart!` — agent-callable fresh image (D5 escape hatch).
 - `build!` — materialize `.clj` files (the C1/C6 explicit build).

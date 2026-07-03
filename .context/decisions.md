@@ -67,8 +67,9 @@ the change here (same commit).
 
 ## F — user-test findings (status)
 
-F1 failure-details in results ✅ · F2 atomic edit groups (open) · F3 `{:error}`
-on unparseable source (open) · F4 ns-create op (open) · F5 ns-add-require op
-(open) · F6 form-mapped stack traces (open) · F7 stdout-vs-`!` scope decision
-(open — needs user) · F8 return-shape/`:affected`/build-scaffold polish (open).
+F1 failure-details in results ✅ · F2 atomic edit groups ✅ (calculator bench
+−49% wall) · F3 `{:error}` on unparseable source (open) · F4 ns-create op
+(open) · F5 ns-add-require op (open) · F6 form-mapped stack traces (open) ·
+F7 stdout-vs-`!` scope decision (open — needs user) · F8 return-shape/
+`:affected`/build-scaffold polish (open).
 Details: `projects/calculator/REPORT.md` (untracked) and `.context/dogfooding.md`.

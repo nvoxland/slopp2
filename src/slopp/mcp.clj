@@ -57,6 +57,18 @@
                   :properties {:ns {:type "string"} :name {:type "string"}
                                :prompt {:type "string"}}
                   :required ["ns" "name"]}}
+   {:name "edit_group"
+    :description "Apply several form writes as ONE atomic intent: all-or-nothing commit, one verification at the end. Use for multi-form refactors."
+    :inputSchema {:type "object"
+                  :properties {:steps {:type "array"
+                                       :items {:type "object"
+                                               :properties {:action {:type "string" :enum ["replace" "add" "delete"]}
+                                                            :ns {:type "string"}
+                                                            :name {:type "string"}
+                                                            :source {:type "string"}}
+                                               :required ["action" "ns"]}}
+                               :prompt {:type "string"}}
+                  :required ["steps"]}}
    {:name "edit_rename"
     :description "Rename a form and every reference to it, across namespaces (one coordinated delta; shadow-safe)."
     :inputSchema {:type "object"
@@ -95,6 +107,15 @@
       "edit_delete_form"  (text (-> (api/delete-form! session (sym :ns) (sym :name)
                                                       :prompt (:prompt a))
                                     (select-keys [:error :test :affected :delta])))
+      "edit_group"        (text (-> (api/edit-group!
+                                     session
+                                     (mapv (fn [s] (cond-> {:action (keyword (:action s))
+                                                            :ns (symbol (:ns s))}
+                                                     (:name s)   (assoc :name (symbol (:name s)))
+                                                     (:source s) (assoc :source (:source s))))
+                                           (:steps a))
+                                     :prompt (:prompt a))
+                                    (select-keys [:error :step :group :warnings :test :affected :deltas])))
       "edit_rename"       (text (-> (api/rename! session (sym :ns) (sym :old)
                                                  (sym :new) :prompt (:prompt a))
                                     (select-keys [:error :renamed :test :affected :delta])))

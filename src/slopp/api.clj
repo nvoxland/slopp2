@@ -260,6 +260,92 @@
             {:delta delta :test summary :affected (or affected :all)})))
     {:error (str "no form named " nm " in " ns-sym)}))
 
+(defn- apply-group-step
+  "Apply one edit-group step to a store VALUE. Returns {:store :delta :hot ...}
+  or {:error msg}. `:hot` is the hot-reload action for the commit phase."
+  [st gid prompt {:keys [action ns name source]}]
+  (case action
+    :replace (let [{:keys [node error]} (edit/parse-form source)]
+               (if error
+                 {:error error}
+                 (if-let [[st' d] (store/replace-node st ns name node
+                                                      :prompt prompt :group gid)]
+                   {:store st' :delta d :hot [:eval ns source]}
+                   {:error (str "no form named " name " in " ns)})))
+    :add     (let [{:keys [node error]} (edit/parse-form source)
+                   nm (some-> node store/form-symbol)]
+               (cond
+                 error {:error error}
+                 (and nm (store/form-named st ns nm))
+                 {:error (str nm " already exists in " ns)}
+                 :else
+                 (if-let [[st' d] (store/append-form st ns node
+                                                     :prompt prompt :group gid)]
+                   {:store st' :delta d :hot [:eval ns source]}
+                   {:error (str "no namespace " ns " (ingest it first)")})))
+    :delete  (if-let [[st' d] (store/remove-form st ns name
+                                                 :prompt prompt :group gid)]
+               {:store st' :delta d :hot [:unmap ns name]}
+               {:error (str "no form named " name " in " ns)})
+    {:error (str "unknown action: " action)}))
+
+(defn edit-group!
+  "Apply several form writes as ONE atomic intent (F2). All steps are validated
+  and applied to a store value first — any error rejects the WHOLE group with
+  nothing committed (store, deltas, image untouched). On success: all deltas
+  (sharing a `:group` id) commit and persist, every change hot-reloads, and
+  verification runs ONCE at the end — no meaningless mid-refactor red, no
+  wasted diagnostic restart. Steps: [{:action :replace|:add|:delete
+  :ns sym :name sym :source str} ...]."
+  [session steps & {:keys [prompt]}]
+  (if (empty? steps)
+    {:error "edit-group needs at least one step"}
+    (let [[gid st0] (store/alloc-id (:store @session) "g")]
+      (loop [st st0, remaining steps, deltas [], hots [], i 0]
+        (if-let [step (first remaining)]
+          (let [r (apply-group-step st gid prompt step)]
+            (if (:error r)
+              {:error (str "step " i ": " (:error r)) :step i}
+              (recur (:store r) (rest remaining)
+                     (conj deltas (:delta r)) (conj hots (:hot r)) (inc i))))
+          ;; commit phase — only reached when every step applied cleanly
+          (let [_        (swap! session assoc :store st)
+                db       (:db @session)
+                _        (doseq [d deltas]
+                           (when db (db/persist! db st d)))
+                image    (:image @session)
+                _        (doseq [[kind ns-sym x] hots]
+                           (case kind
+                             :eval  (do (repl/eval! image (format "(in-ns '%s)" ns-sym))
+                                        (repl/eval! image x))
+                             :unmap (repl/eval! image (format "(ns-unmap '%s '%s)" ns-sym x))))
+                ;; affected = union across steps; any unknown → conservative full run
+                per-step (map (fn [{:keys [action ns name source]}]
+                                (let [nm (case action
+                                           :add (some-> (edit/parse-form source) :node
+                                                        store/form-symbol)
+                                           name)
+                                      a  (when nm (affected-tests session ns nm))]
+                                  (cond
+                                    (some? a)       (set a)
+                                    (= action :add) #{}   ; brand-new form: no testers
+                                    :else           :unknown)))
+                              steps)
+                affected (when (not-any? #{:unknown} per-step)
+                           (vec (sort (apply set/union per-step))))
+                main-ns  (:ns (first steps))
+                summary  (run-verification! session main-ns
+                                            (when (seq affected) affected))]
+            (swap! session update :store store/record-verification main-ns summary)
+            (persist-last! session)
+            {:group    gid
+             :deltas   deltas
+             :warnings (->> (map :ns steps) distinct
+                            (mapcat #(edit/ns-warnings (:store @session) %))
+                            vec)
+             :test     summary
+             :affected (or (not-empty affected) :all)}))))))
+
 (defn test-run!
   "Traced, diagnosed run of `ns-sym`'s tests; refreshes the test→form map and
   records the result (C4)."

@@ -42,8 +42,9 @@ The oracle must never return a false verdict. Everything here serves that.
 - Image stack traces currently say `NO_SOURCE_FILE:<line>` for form-eval'd
   code (F6 open): fix direction is loading rendered source via
   `Compiler/load` with a virtual path so traces map to VFS lines.
-- The known mid-refactor cost: each single-form edit verifies immediately, so
-  a multi-form refactor hits a meaningless red + a diagnostic restart between
-  edits (F2 → atomic edit groups).
+- Multi-form refactors must go through `edit-group!` (F2): single-form edits
+  verify immediately, so sequencing them hits a meaningless mid-refactor red +
+  a diagnostic restart between edits (measured: −49% calculator wall time when
+  the two-form fix moved to a group).
 - Don't run expensive assertions about timing in tests except with generous
   bounds (warm-spare test asserts <3000ms swap vs ~6-8s boot).

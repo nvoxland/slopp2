@@ -22,7 +22,8 @@
 ;; --- the sample apps ---
 
 (def calculator
-  {:name "calculator" :v 1 :test-ns "calc.core"
+  ;; v2: the two-form fix rides ONE edit_group (F2) instead of two replaces
+  {:name "calculator" :v 2 :test-ns "calc.core"
    :steps
    [{:tool "ingest" :args {:ns "calc.core" :source "(ns calc.core\n  (:require [clojure.test :refer [deftest is]]))\n"}}
     {:tool "edit_add_form" :args {:ns "calc.core" :prompt "tokenizer"
@@ -39,11 +40,13 @@
     ;; RED lands here; since F1 the failure details come back in this response
     {:tool "edit_add_form" :args {:ns "calc.core" :prompt "precedence tests"
                                   :source "(deftest evaluate-t\n  (is (= 5.0 (evaluate \"2+3\")))\n  (is (= 7.0 (evaluate \"1+2*3\")))\n  (is (= 4.0 (evaluate \"10-3*2\"))))"}}
-    ;; the two-form fix (mid-refactor red until F2 edit groups exist)
-    {:tool "edit_replace_form" :args {:ns "calc.core" :name "eval-pass" :prompt "honor the tier; thread tokens"
-                                      :source "(defn eval-pass [ops tokens]\n  (reduce (fn [acc [op v]]\n            (if (ops op)\n              (conj (pop acc) (apply-op op (peek acc) v))\n              (conj acc op v)))\n          [(first tokens)]\n          (partition 2 (rest tokens))))"}}
-    {:tool "edit_replace_form" :args {:ns "calc.core" :name "evaluate" :prompt "unwrap result"
-                                      :source "(defn evaluate [s]\n  (->> (tokenize s) (eval-pass #{:* :/}) (eval-pass #{:+ :-}) first))"}}
+    ;; the two-form fix as ONE atomic intent (F2): no mid-refactor red/restart
+    {:tool "edit_group"
+     :args {:prompt "fix precedence (atomic)"
+            :steps [{:action "replace" :ns "calc.core" :name "eval-pass"
+                     :source "(defn eval-pass [ops tokens]\n  (reduce (fn [acc [op v]]\n            (if (ops op)\n              (conj (pop acc) (apply-op op (peek acc) v))\n              (conj acc op v)))\n          [(first tokens)]\n          (partition 2 (rest tokens))))"}
+                    {:action "replace" :ns "calc.core" :name "evaluate"
+                     :source "(defn evaluate [s]\n  (->> (tokenize s) (eval-pass #{:* :/}) (eval-pass #{:+ :-}) first))"}]}}
     {:tool "edit_add_form" :args {:ns "calc.core" :prompt "CLI entry"
                                   :source "(defn run-cli [args]\n  (doseq [expr args]\n    (println (str expr \" = \" (evaluate expr)))))"}}
     {:tool "edit_rename" :args {:ns "calc.core" :old "eval-pass" :new "reduce-tier" :prompt "clearer name"}}]})

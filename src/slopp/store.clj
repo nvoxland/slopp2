@@ -21,6 +21,11 @@
   (let [i (:next-id store)]
     [(str prefix i) (assoc store :next-id (inc i))]))
 
+(defn alloc-id
+  "Public id allocation (e.g. a `g<n>` group id shared by several deltas)."
+  [store prefix]
+  (gen-id store prefix))
+
 (def ^:private def-heads
   "Head symbols whose second element names the form."
   '#{def defn defn- defmacro defmulti defmethod defrecord deftype
@@ -85,7 +90,7 @@
   "Replace the CST node of the form named `nm` in `ns-sym`, keeping its stable id
   (C2/O1 whole-form replace); append a `:replace` delta carrying `prompt`.
   Returns [store' delta], or nil if no such form."
-  [store ns-sym nm node & {:keys [prompt op] :or {op :replace}}]
+  [store ns-sym nm node & {:keys [prompt op group] :or {op :replace}}]
   (let [elems (get-in store [:namespaces ns-sym :elements])
         idx   (first (keep-indexed
                       (fn [i e] (when (and (= :form (:kind e)) (= nm (:name e))) i))
@@ -94,8 +99,9 @@
       (let [elem     (nth elems idx)
             new-elem (assoc elem :node node :name (form-symbol node))
             [did store] (gen-id store "d")
-            delta    {:id did :parent (:id (last (:deltas store)))
-                      :op op :ns ns-sym :form-id (:id elem) :prompt prompt}]
+            delta    (cond-> {:id did :parent (:id (last (:deltas store)))
+                              :op op :ns ns-sym :form-id (:id elem) :prompt prompt}
+                       group (assoc :group group))]
         [(-> store
              (assoc-in [:namespaces ns-sym :elements] (assoc elems idx new-elem))
              (update :deltas conj delta))
@@ -105,7 +111,7 @@
   "Append a new form to `ns-sym` (separated by a newline, followed by one) with
   a fresh id; ONE `:add` delta. Returns [store' delta], or nil if the namespace
   doesn't exist."
-  [store ns-sym node & {:keys [prompt]}]
+  [store ns-sym node & {:keys [prompt group]}]
   (when-let [elems (get-in store [:namespaces ns-sym :elements])]
     (let [needs-nl?    (and (seq elems)
                             (not (str/ends-with? (n/string (:node (peek elems))) "\n")))
@@ -116,8 +122,9 @@
                          true      (conj {:id fid :kind :form
                                           :name (form-symbol node) :node node}
                                          {:kind :sep :node (n/newlines 1)}))
-          delta        {:id did :parent (:id (last (:deltas store)))
-                        :op :add :ns ns-sym :form-id fid :prompt prompt}]
+          delta        (cond-> {:id did :parent (:id (last (:deltas store)))
+                                :op :add :ns ns-sym :form-id fid :prompt prompt}
+                         group (assoc :group group))]
       [(-> store'
            (assoc-in [:namespaces ns-sym :elements] new-elems)
            (update :deltas conj delta))
@@ -127,7 +134,7 @@
   "Remove the form named `nm` from `ns-sym` (plus its immediately following
   separator, so no doubled blank line remains); ONE `:delete` delta. Returns
   [store' delta], or nil if no such form."
-  [store ns-sym nm & {:keys [prompt]}]
+  [store ns-sym nm & {:keys [prompt group]}]
   (let [elems (get-in store [:namespaces ns-sym :elements])
         idx   (first (keep-indexed
                       (fn [i e] (when (and (= :form (:kind e)) (= nm (:name e))) i))
@@ -139,9 +146,10 @@
             new-elems    (into (subvec elems 0 idx)
                                (subvec elems (+ idx (if drop-next? 2 1))))
             [did store'] (gen-id store "d")
-            delta        {:id did :parent (:id (last (:deltas store)))
-                          :op :delete :ns ns-sym :form-id fid :name nm
-                          :prompt prompt}]
+            delta        (cond-> {:id did :parent (:id (last (:deltas store)))
+                                  :op :delete :ns ns-sym :form-id fid :name nm
+                                  :prompt prompt}
+                           group (assoc :group group))]
         [(-> store'
              (assoc-in [:namespaces ns-sym :elements] new-elems)
              (update :deltas conj delta))
