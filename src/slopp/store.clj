@@ -371,9 +371,29 @@
                            od)
         delivered  (into #{} (mapcat :applied) prior)
         idmap0     (into {} (mapcat :id-map) prior)
+        dropped    (filter #(delivered (:id %)) (drop common td))
+        ;; recreated-source guard: a "delivered" delta whose content doesn't
+        ;; match OUR replayed copy of it means the source was deleted and
+        ;; recreated at the same path/name — its ids alias dead history, and
+        ;; silently dropping its work would be corruption
+        imposter   (some (fn [d]
+                           (when-let [copy (first (filter #(= (:id d)
+                                                              (:merged-from %))
+                                                          od))]
+                             ;; compare CONTENT — replay remaps the form-id
+                             ;; keys, so only the source texts are stable
+                             (when (and (:sources d)
+                                        (not= (sort (vals (:sources d)))
+                                              (sort (vals (:sources copy)))))
+                               d)))
+                         dropped)
         theirs-sfx (remove #(delivered (:id %)) (drop common td))
         touched    (suffix-touched (remove :merged-from ours-sfx))]
-    (loop [st ours, dds (seq theirs-sfx), idmap idmap0, merged 0,
+    (if imposter
+      {:error (str "merge identity mismatch: delta " (:id imposter)
+                   " looks like a recreated fork/branch at the same"
+                   " path/name — use a fresh path (or a new branch)")}
+      (loop [st ours, dds (seq theirs-sfx), idmap idmap0, merged 0,
            conflicts [], notes [], changed [], new-nses [], applied []]
       (if-let [d (first dds)]
         (let [ds        (rest dds)
@@ -548,4 +568,4 @@
           (recur st ds idmap merged conflicts notes changed new-nses applied))
         {:store st :merged merged :conflicts conflicts :notes notes
          :changed-form-ids (vec (distinct changed)) :new-nses new-nses
-         :applied applied :id-map idmap :fork-point fork-point}))))
+         :applied applied :id-map idmap :fork-point fork-point})))))

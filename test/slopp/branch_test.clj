@@ -16,7 +16,9 @@
     (try
       (api/ingest! sess 'br.core seed)
       (testing "branching is instant and starts identical (no image work)"
-        (is (= {:branch "feature" :from "main"} (api/branch! sess "feature")))
+        (let [r (api/branch! sess "feature")]
+          (is (= "feature" (:branch r)))
+          (is (= "main" (:from r))))
         (is (= [2] (api/query-eval sess "(br.core/f 1)"))))
       (testing "branch edits are verified writes like any other"
         (let [r (api/edit-replace! sess 'br.core 'f "(defn f [x] (+ x 10))"
@@ -153,4 +155,32 @@
               (is (:booted r))
               (is (not= feature-port (:port (:image @sess))))
               (is (= [11] (api/query-eval sess "(br.core/f 1)")))))))
+      (finally (api/close! sess)))))
+
+(deftest branches-have-identity-beyond-their-name
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'br.core seed)
+      (api/branch! sess "feature")
+      (let [id1 (:id (first (filter #(= "feature" (:name %))
+                                    (:branches (api/query-branches sess)))))]
+        (is (string? id1))
+        (api/edit-replace! sess 'br.core 'f "(defn f [x] (+ x 10))")
+        (api/edit-replace! sess 'br.core 'f-t "(deftest f-t (is (= 11 (f 1))))")
+        (api/branch-switch! sess "main")
+        (api/branch-merge! sess "feature")
+        (api/branch-delete! sess "feature")
+        (testing "a RECREATED branch with the same name is a fresh identity"
+          (api/branch! sess "feature")
+          (let [id2 (:id (first (filter #(= "feature" (:name %))
+                                        (:branches (api/query-branches sess)))))]
+            (is (not= id1 id2)))
+          ;; and it merges cleanly as its own line of work
+          (api/edit-replace! sess 'br.core 'f "(defn f [x] (+ x 20))")
+          (api/edit-replace! sess 'br.core 'f-t "(deftest f-t (is (= 21 (f 1))))")
+          (api/branch-switch! sess "main")
+          (let [r (api/branch-merge! sess "feature")]
+            (is (nil? (:error r)) (pr-str r))
+            (is (empty? (:conflicts r)))
+            (is (= [21] (api/query-eval sess "(br.core/f 1)"))))))
       (finally (api/close! sess)))))

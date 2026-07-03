@@ -162,3 +162,18 @@
     (let [src (render/render-ns (:store m2) 'm.core)]
       (is (re-find #":from-a" src))
       (is (re-find #":from-b" src)))))
+
+(deftest recreated-fork-path-is-detected-not-swallowed
+  ;; rm -rf fork; cp -r base fork AGAIN: the new copy mints the SAME delta
+  ;; ids as the merged-and-gone old fork. Its work must NOT be silently
+  ;; dropped as "already delivered" — surface an identity error instead.
+  (let [b      (base)
+        fork-a (replace! b 'a "(defn a [x] :old-fork-work)")
+        m1     (store/merge-logs b fork-a :from "the-fork-dir")
+        main1  (first (store/record-merge (:store m1) "the-fork-dir" m1))
+        ;; the recreated fork: fresh copy of the SAME base, different work,
+        ;; colliding delta ids
+        fork-b (replace! b 'b "(defn b [x] :new-fork-work)")
+        m2     (store/merge-logs main1 fork-b :from "the-fork-dir")]
+    (is (:error m2))
+    (is (re-find #"recreated" (:error m2)))))

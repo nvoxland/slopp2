@@ -1295,17 +1295,20 @@
       {:error (str "branch " nm " already exists")}
 
       :else
-      (do (let [conn (when dir
-                       (doto (db/open! (line-dir dir nm))
-                         (snapshot-to-conn! (:store @session))))]
+      (do (let [line-id (str (java.util.UUID/randomUUID))
+                conn    (when dir
+                          (doto (db/open! (line-dir dir nm))
+                            (snapshot-to-conn! (:store @session))
+                            (db/set-line-id! line-id)))]
             (swap! session
                    (fn [s]
                      (-> s
                          (update :lines assoc (:branch s)
                                  {:store (:store s) :conn (:db s)})
                          (assoc :branch nm :db conn
+                                :store (assoc (:store s) :line-id line-id)
                                 :data-version (some-> conn db/data-version)))))
-            {:branch nm :from branch})))))
+            {:branch nm :from branch :id line-id})))))
 
 (defn- boot-line-image!
   "A fresh image loaded with `store` (consumes the warm spare when ready).
@@ -1390,7 +1393,9 @@
       {:error "cannot merge a branch into itself — switch to the target line first"}
       (if-let [target (load-line session nm)]
         (let [res (merge-into-session! session (:store target)
-                                       (str "branch:" nm))]
+                                       (str "branch:" nm "#"
+                                            (or (:line-id (:store target))
+                                                "legacy")))]
           ;; lazily-opened conn is only needed for reading here
           (when (and (:conn target)
                      (not (contains? (:lines @session) nm)))
@@ -1435,6 +1440,7 @@
                   (cond-> {:name nm}
                     st (assoc :head   (:id (last (store/deltas st)))
                               :deltas (count (store/deltas st)))
+                    (:line-id st) (assoc :id (:line-id st))
                     (:image line) (assoc :image :parked)))]
     {:current  branch
      :branches (vec (concat

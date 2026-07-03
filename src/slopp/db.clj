@@ -138,6 +138,12 @@
           :ns (symbol (:deltas/ns row))}
          (edn/read-string (:deltas/payload row))))
 
+(defn set-line-id!
+  "Stamp this store db with its line identity (branch creation)."
+  [conn line-id]
+  (jdbc/execute! conn ["INSERT INTO meta (k,v) VALUES ('line-id', ?)
+                        ON CONFLICT(k) DO UPDATE SET v = excluded.v" line-id]))
+
 (defn load-store
   "Reconstruct the full in-memory store from the db, or nil if empty."
   [conn]
@@ -151,4 +157,6 @@
                          (jdbc/execute! conn ["SELECT * FROM elements ORDER BY ns, pos"]))
      :deltas     (mapv row->delta
                        (jdbc/execute! conn ["SELECT * FROM deltas ORDER BY seq"]))
-     :next-id    next-id}))
+     :next-id    next-id
+     :line-id    (:meta/v (jdbc/execute-one!
+                           conn ["SELECT v FROM meta WHERE k = 'line-id'"]))}))

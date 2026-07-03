@@ -183,6 +183,19 @@ the change here (same commit).
   refresh (full load-store per sync is fine at current scale); branch-create
   races between servers.
 
+- **P4-m5d — Branch identity = name + line-id (user-probed).** Branches
+  carry a uuid `:line-id` minted at creation (on the branch's store value;
+  persisted as a meta row; shown in `query_branches`), and merge causal
+  state is scoped by `branch:<name>#<line-id>` — so deleting and recreating
+  a branch name is a genuinely fresh identity, not an accident of the
+  monotonic id counter. Fork DIRS can't mint identity (cp -r), so merge
+  guards instead: a "delivered" delta whose CONTENT (source texts — the
+  form-id keys are remapped on replay) doesn't match our `:merged-from` copy
+  means the path was recreated over dead history → loud
+  `{:error "merge identity mismatch ..."}` instead of silently swallowing
+  the new fork's work. Same-branch multi-agent remains the default working
+  mode; branches are opt-in isolation.
+
 ## H — host
 
 - **H1 — slopp itself is Clojure/JVM** (same runtime as image + tooling; no
