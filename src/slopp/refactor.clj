@@ -75,6 +75,88 @@
     (assert (= 1 (count nodes)) "rename: form no longer parses to one node")
     (first nodes)))
 
+;; --- extract (Phase-3 op #2) ---
+
+(defn- node-span
+  "Exclusive end position of a node printed as `s` starting at [row col]."
+  [[row col] s]
+  (let [ls (clojure.string/split s #"\n" -1)
+        n  (count ls)]
+    (if (= 1 n)
+      [row (+ col (count s))]
+      [(+ row (dec n)) (inc (count (peek ls)))])))
+
+(defn- inside?
+  "Is [r c] within the half-open span [start end)?"
+  [[sr sc] [er ec] [r c]]
+  (and (or (> r sr) (and (= r sr) (>= c sc)))
+       (or (< r er) (and (= r er) (< c ec)))))
+
+(defn- replace-span
+  "Replace the text between 1-based [start end) positions in `s` with `repl`."
+  [s [sr sc] [er ec] repl]
+  (let [ls (vec (clojure.string/split s #"\n" -1))]
+    (clojure.string/join
+     "\n"
+     (concat (subvec ls 0 (dec sr))
+             [(str (subs (ls (dec sr)) 0 (dec sc)) repl (subs (ls (dec er)) (dec ec)))]
+             (subvec ls er)))))
+
+(defn extract-plan
+  "Plan extracting the unique occurrence of `subform-src` inside `from-name`
+  into a new fn `new-name`: params = the free locals (bound outside the
+  subform, used inside), in first-use order. Returns
+  {:new-defn-src :new-from-src :params} or {:error msg}."
+  [store ns-sym from-name subform-src new-name]
+  (try
+    (if-let [e (store/form-named store ns-sym from-name)]
+      (let [form-src (n/string (:node e))
+            target   (n/sexpr (p/parse-string subform-src))
+            matches  (->> (iterate z/next (z/of-string form-src {:track-position? true}))
+                          (take-while (complement z/end?))
+                          (filter #(try (= target (z/sexpr %))
+                                        (catch Exception _ false)))
+                          vec)]
+        (cond
+          (empty? matches)
+          {:error (str "subform not found in " from-name)}
+
+          (< 1 (count matches))
+          {:error (str "subform occurs " (count matches) " times in " from-name
+                       " — extraction is ambiguous")}
+
+          :else
+          (let [m        (first matches)
+                [r c]    (z/position m)
+                sub-str  (n/string (z/node m))
+                [er ec]  (node-span [r c] sub-str)
+                elems    (store/elements store ns-sym)
+                idx      (first (keep-indexed
+                                 (fn [i el] (when (= (:id e) (:id el)) i)) elems))
+                [fr fc]  (nth (render/element-offsets store ns-sym) idx)
+                abs      (fn [[rr cc]] [(+ fr rr -1) (if (= rr 1) (+ fc cc -1) cc)])
+                a-start  (abs [r c])
+                a-end    (abs [er ec])
+                an       (index/analyze-with-locals (render/render-ns store ns-sym))
+                defs     (into {} (map (juxt :id identity)) (:locals an))
+                params   (->> (:local-usages an)
+                              (filter #(inside? a-start a-end [(:row %) (:col %)]))
+                              (remove #(when-let [d (defs (:id %))]
+                                         (inside? a-start a-end [(:row d) (:col d)])))
+                              (sort-by (juxt :row :col))
+                              (map :name)
+                              distinct
+                              vec)
+                call-src (str "(" new-name
+                              (apply str (map #(str " " %) params)) ")")]
+            {:new-defn-src (str "(defn " new-name " ["
+                                (clojure.string/join " " params) "]\n  " sub-str ")")
+             :new-from-src (replace-span form-src [r c] [er ec] call-src)
+             :params       params})))
+      {:error (str "no form named " from-name " in " ns-sym)})
+    (catch Exception ex
+      {:error (str "extract failed: " (ex-message ex))})))
+
 (defn rename-changeset
   "Compute {form-id new-node} renaming `def-ns/old-name` to `new-name` across
   every store namespace."

@@ -123,6 +123,13 @@
                                :new {:type "string"} :prompt {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "old" "new"]}}
+   {:name "edit_extract"
+    :description "Extract a unique subform of a function into a new function (free locals become params; placed before the caller; the subform becomes the call). One atomic, verified intent."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :from {:type "string"}
+                               :form {:type "string"} :name {:type "string"}
+                               :prompt {:type "string"}}
+                  :required ["ns" "from" "form" "name"]}}
    {:name "checkpoint"
     :description "Mark a unit of work done: deterministically normalize the forms changed since the last checkpoint (tracked :normalize delta, re-verified), and record a boundary in the history."
     :inputSchema {:type "object" :properties {:label {:type "string"}}}}
@@ -235,6 +242,11 @@
       "edit_move"         (text (api/move-form! session (sym :ns) (sym :name)
                                                 :before (sym :before)
                                                 :prompt (:prompt a)))
+      "edit_extract"      (text (-> (api/extract! session (sym :ns) (sym :from)
+                                                  (sym :name) (:form a)
+                                                  :prompt (:prompt a))
+                                    (select-keys [:error :extracted :group :test :affected])
+                                    (summarize (:verbose a))))
       "checkpoint"        (text (api/checkpoint! session :label (:label a)))
       "test_run"          (text (api/test-run! session (sym :ns)
                                                :only (some->> (:only a) (mapv symbol))))

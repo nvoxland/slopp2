@@ -42,6 +42,7 @@ Server: `clojure -M -m slopp.mcp` (stdio) from the slopp repo.
 | Change SEVERAL forms for one reason | `edit_group` — atomic, verified once; sequencing single edits burns a false red + a restart between them |
 | Rename anything | `edit_rename` — rewrites the def + every reference across namespaces, shadow-safe; NEVER rename by editing call sites yourself |
 | Reorder forms | `edit_move` (form X to just before form Y) |
+| Extract a helper | `edit_extract` — give the exact subform source + a name; params (the free locals) are computed for you, placement and the call-site rewrite are handled, behavior is re-verified |
 | Delete | `edit_delete_form` |
 
 **Every write must compile.** A form referencing something undefined is

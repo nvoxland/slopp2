@@ -652,6 +652,51 @@
                :test     summary
                :affected (or affected :all)})))))))
 
+(defn extract!
+  "Phase-3 structural op: extract a UNIQUE subform of `from` into a new fn
+  `new-name` — params are the free locals in first-use order (computed from
+  the index's local analysis), the new fn lands BEFORE `from` (compile order),
+  and the subform becomes the call. One atomic intent: three grouped deltas
+  (add, move, replace), compile-checked before commit, verified once."
+  [session ns-sym from new-name subform-src & {:keys [prompt]}]
+  (let [st   (:store @session)
+        plan (refactor/extract-plan st ns-sym from subform-src new-name)]
+    (cond
+      (:error plan) plan
+
+      (store/form-named st ns-sym new-name)
+      {:error (str new-name " already exists in " ns-sym)}
+
+      :else
+      (let [pd (edit/parse-form (:new-defn-src plan))
+            pf (edit/parse-form (:new-from-src plan))]
+        (cond
+          (:error pd) pd
+          (:error pf) pf
+          :else
+          (let [[gid st0] (store/alloc-id st "g")
+                [st1 d1]  (store/append-form st0 ns-sym (:node pd)
+                                             :prompt prompt :group gid)
+                [st2 d2]  (store/move-form st1 ns-sym new-name from
+                                           :prompt prompt :group gid)
+                [st3 d3]  (store/replace-node st2 ns-sym from (:node pf)
+                                              :prompt prompt :group gid)]
+            (if-let [err (hot-load-all! session st3 [(:form-id d1) (:form-id d3)])]
+              {:error (str "extract failed to compile: " err)}
+              (do (swap! session assoc :store st3)
+                  (when-let [db (:db @session)]
+                    (doseq [d [d1 d2 d3]] (db/persist! db st3 d)))
+                  (let [affected (affected-tests session ns-sym from)
+                        summary  (run-verification! session ns-sym affected)]
+                    (swap! session update :store store/record-verification
+                           ns-sym summary)
+                    (persist-last! session)
+                    {:extracted {:new    (symbol (str ns-sym) (str new-name))
+                                 :params (:params plan)}
+                     :group    gid
+                     :test     summary
+                     :affected (or affected :all)})))))))))
+
 (defn build!
   "C1/C6 explicit build: materialize a runnable project under `dir` —
   `src/<ns-path>.clj` for every namespace plus a minimal `deps.edn` (F8), so

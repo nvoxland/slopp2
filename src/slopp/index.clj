@@ -83,6 +83,16 @@
                   (str (:name d) "!")
                   (str/replace (str (:name d)) #"!+$" ""))})))
 
+(defn analyze-with-locals
+  "Like `analyze`, but including local-binding definitions and usages
+  (`:locals` / `:local-usages`, linked by `:id`) — the basis for free-variable
+  computation in structural extraction."
+  [source]
+  (:analysis
+   (with-in-str source
+     (kondo/run! {:lint ["-"]
+                  :config {:analysis {:locals true} :output {:analysis true}}}))))
+
 (defn lint
   "clj-kondo FINDINGS for `source` (syntax + best-practice violations, distinct
   from the :analysis extraction): [{:level :type :message :row :col} ...],
