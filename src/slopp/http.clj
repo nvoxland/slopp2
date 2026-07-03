@@ -48,6 +48,28 @@
                                             :t (System/currentTimeMillis)
                                             :in (count raw) :out (count text)})
                          (respond! ex 200 (json/generate-string {:result text}))))))
+    ;; Phase 4 m1: native MCP over streamable HTTP — N MCP clients (Claude
+    ;; Code, Codex) share this ONE session/store/image. Single JSON response
+    ;; per POST (legal per the streamable-HTTP spec); notifications → 202.
+    (.createContext server "/mcp"
+                    (handler
+                     (fn [^HttpExchange ex]
+                       (if (not= "POST" (.getRequestMethod ex))
+                         (respond! ex 405 (json/generate-string
+                                           {:error "POST JSON-RPC only"}))
+                         (let [raw  (slurp (.getRequestBody ex))
+                               req  (json/parse-string raw true)
+                               resp (mcp/handle session req)]
+                           (when (= "tools/call" (:method req))
+                             (swap! calls conj
+                                    {:tool (get-in req [:params :name])
+                                     :t (System/currentTimeMillis)
+                                     :in (count raw)
+                                     :out (count (str (get-in resp [:result :content 0 :text])))}))
+                           (if (nil? resp)               ; notification
+                             (do (.sendResponseHeaders ex 202 -1)
+                                 (.close (.getResponseBody ex)))
+                             (respond! ex 200 (json/generate-string resp))))))))
     (.createContext server "/metrics"
                     (handler
                      (fn [^HttpExchange ex]

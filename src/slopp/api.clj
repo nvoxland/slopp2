@@ -151,12 +151,12 @@
   loads it FIRST; a failed load commits nothing — T4), then verified and
   recorded like every write. Overwriting an existing namespace is NOT allowed
   — edit its forms instead. Returns {:ns :forms :test} or {:error msg}."
-  [session ns-sym source]
+  [session ns-sym source & {:keys [agent]}]
   (if (get-in (:store @session) [:namespaces ns-sym])
     {:error (str ns-sym " already exists — edit its forms instead"
                  " (whole-namespace overwrite is not allowed)")}
     (try
-      (let [candidate (store/ingest (:store @session) ns-sym source)
+      (let [candidate (store/ingest (:store @session) ns-sym source :agent agent)
             res (repl/load-checked! (:image @session)
                                     (render/render-ns candidate ns-sym)
                                     (render/ns-path ns-sym))]
@@ -260,7 +260,7 @@
                     (some (fn [s] (and s (clojure.string/includes? (str s) contains)))
                           [(:prompt %) (:label %)])))
        (take limit)
-       (mapv #(select-keys % [:id :op :ns :prompt :label :group
+       (mapv #(select-keys % [:id :op :ns :prompt :label :group :agent
                               :form-id :form-ids :old :new :before]))))
 
 (defn query-project
@@ -509,12 +509,13 @@
   pipeline + hot-reload, then re-verify — only the tests the trace map says
   exercise this form (D1), cross-checked on a fresh image if red (D5) — and
   record the outcome as provenance (C4)."
-  [session ns-sym nm new-source & {:keys [prompt]}]
+  [session ns-sym nm new-source & {:keys [prompt agent]}]
   (let [t0 (System/nanoTime)
         pre-warned (set (map :var (edit/ns-warnings (:store @session) ns-sym)))
         r (rebased-write!
            session
-           (fn [base] (edit/replace-form base ns-sym nm new-source :prompt prompt))
+           (fn [base] (edit/replace-form base ns-sym nm new-source
+                                         :prompt prompt :agent agent))
            (fn [base] (:node (store/form-named base ns-sym nm)))
            (symbol (str ns-sym) (str nm)))]
     (if (or (:error r) (:conflict r))
@@ -547,7 +548,7 @@
   "Add a new top-level form to `ns-sym` (O1 base write): dialect gate, `:add`
   delta, hot-reload into the image, verification, provenance. Returns
   {:delta :warnings :test :affected} or {:error msg}."
-  [session ns-sym source & {:keys [prompt]}]
+  [session ns-sym source & {:keys [prompt agent]}]
   (let [t0 (System/nanoTime)
         {:keys [node error]} (edit/parse-form source)
         nm (some-> node store/form-symbol)]
@@ -567,7 +568,7 @@
                    {:error (str nm " already exists in " ns-sym)}
                    :else
                    (if-let [[st' d] (store/append-form base ns-sym node
-                                                       :prompt prompt)]
+                                                       :prompt prompt :agent agent)]
                      {:store st' :delta d}
                      {:error (str "no namespace " ns-sym " (ingest it first)")})))
                (fn [base] (when nm (:node (store/form-named base ns-sym nm))))
@@ -597,11 +598,12 @@
   "Delete the form named `nm` from `ns-sym`: `:delete` delta, `ns-unmap` in the
   image, verification (tests that exercised it will go red — the honest signal
   if it was still referenced), provenance."
-  [session ns-sym nm & {:keys [prompt]}]
+  [session ns-sym nm & {:keys [prompt agent]}]
   (let [r (rebased-write!
            session
            (fn [base]
-             (if-let [[st' d] (store/remove-form base ns-sym nm :prompt prompt)]
+             (if-let [[st' d] (store/remove-form base ns-sym nm
+                                                 :prompt prompt :agent agent)]
                {:store st' :delta d}
                {:error (str "no form named " nm " in " ns-sym)}))
            (fn [base] (:node (store/form-named base ns-sym nm)))
@@ -621,13 +623,14 @@
 (defn- apply-group-step
   "Apply one edit-group step to a store VALUE. Returns {:store :delta :hot ...}
   or {:error msg}. `:hot` is the hot-reload action for the commit phase."
-  [st gid prompt {:keys [action ns name source]}]
+  [st gid prompt agent {:keys [action ns name source]}]
   (case action
     :replace (let [{:keys [node error]} (edit/parse-form source)]
                (if error
                  {:error error}
                  (if-let [[st' d] (store/replace-node st ns name node
-                                                      :prompt prompt :group gid)]
+                                                      :prompt prompt :group gid
+                                                      :agent agent)]
                    {:store st' :delta d :hot [:load (:form-id d)]}
                    {:error (str "no form named " name " in " ns)})))
     :add     (let [{:keys [node error]} (edit/parse-form source)
@@ -638,11 +641,13 @@
                  {:error (str nm " already exists in " ns)}
                  :else
                  (if-let [[st' d] (store/append-form st ns node
-                                                     :prompt prompt :group gid)]
+                                                     :prompt prompt :group gid
+                                                     :agent agent)]
                    {:store st' :delta d :hot [:load (:form-id d)]}
                    {:error (str "no namespace " ns " (ingest it first)")})))
     :delete  (if-let [[st' d] (store/remove-form st ns name
-                                                 :prompt prompt :group gid)]
+                                                 :prompt prompt :group gid
+                                                 :agent agent)]
                {:store st' :delta d :hot [:unmap ns name]}
                {:error (str "no form named " name " in " ns)})
     {:error (str "unknown action: " action)}))
@@ -655,7 +660,7 @@
   verification runs ONCE at the end — no meaningless mid-refactor red, no
   wasted diagnostic restart. Steps: [{:action :replace|:add|:delete
   :ns sym :name sym :source str} ...]."
-  [session steps & {:keys [prompt]}]
+  [session steps & {:keys [prompt agent]}]
   (if (empty? steps)
     {:error "edit-group needs at least one step"}
     (let [t0 (System/nanoTime)
@@ -667,7 +672,7 @@
           [gid st0] (store/alloc-id base0 "g")]
       (loop [st st0, remaining steps, deltas [], hots [], i 0]
         (if-let [step (first remaining)]
-          (let [r (apply-group-step st gid prompt step)]
+          (let [r (apply-group-step st gid prompt agent step)]
             (if (:error r)
               {:error (str "step " i ": " (:error r)) :step i}
               (recur (:store r) (rest remaining)
@@ -764,7 +769,7 @@
   "S2: reorder — move form `nm` to just before `:before` in its namespace (the
   fix for append-only forward references). Image vars are order-independent so
   nothing re-evals; the next fresh load / restart uses the new order."
-  [session ns-sym nm & {:keys [before prompt]}]
+  [session ns-sym nm & {:keys [before prompt agent]}]
   (cond
     (nil? (store/form-named (:store @session) ns-sym nm))
     {:error (str "no form named " nm " in " ns-sym)}
@@ -775,7 +780,7 @@
     :else
     (let [base0 (:store @session)]
       (if-let [[st' delta] (store/move-form base0 ns-sym nm before
-                                            :prompt prompt)]
+                                            :prompt prompt :agent agent)]
         (if-not (try-commit! session base0 st')
           {:conflict {:reason "store changed concurrently — retry"}}
           (do (persist-last! session)
@@ -891,20 +896,21 @@
   the old'). The payload scales with the CHANGE and sibling code is never
   re-transcribed. Rides the full replace pipeline: dialect gate on the
   RESULTING form, rebase/conflict commit, verification, provenance."
-  [session ns-sym form-name match new-src & {:keys [prompt]}]
+  [session ns-sym form-name match new-src & {:keys [prompt agent]}]
   (let [plan (refactor/subform-replace-plan (:store @session) ns-sym form-name
                                             match new-src)]
     (if (:error plan)
       plan
       (edit-replace! session ns-sym form-name (:new-form-src plan)
-                     :prompt (or prompt (str "subform edit in " form-name))))))
+                     :prompt (or prompt (str "subform edit in " form-name))
+                     :agent agent))))
 
 (defn revert-form!
   "One-call rollback (item 4): replace `nm` with an earlier version of itself —
   by default the previous one, or the version at delta `:to` (see
   query-form-history). Rides the standard replace pipeline, so the revert is
   itself compile-gated, verified, and recorded provenance."
-  [session ns-sym nm & {:keys [to prompt]}]
+  [session ns-sym nm & {:keys [to prompt agent]}]
   (let [hist (query-form-history session ns-sym nm)]
     (cond
       (nil? hist)
@@ -921,7 +927,8 @@
           {:error (str "no version of " nm " at delta " to)}
           (edit-replace! session ns-sym nm (:source target)
                          :prompt (or prompt
-                                     (str "revert to " (:delta target)))))))))
+                                     (str "revert to " (:delta target)))
+                         :agent agent))))))
 
 (defn- rename-in-trace
   "Carry the observed test→form map across a rename (old qsym → new qsym)."
@@ -939,7 +946,7 @@
   rewritten form, drops the old var (`ns-unmap`), re-verifies the affected
   tests, and records the outcome. Returns {:delta :renamed :test :affected} or
   {:error msg}."
-  [session ns-sym old-name new-name & {:keys [prompt]}]
+  [session ns-sym old-name new-name & {:keys [prompt agent]}]
   (let [st   (:store @session)
         qold (symbol (str ns-sym) (str old-name))
         qnew (symbol (str ns-sym) (str new-name))]
@@ -953,7 +960,7 @@
       :else
       (let [changeset    (refactor/rename-changeset st ns-sym old-name new-name)
             [st' delta]  (store/apply-changeset st :rename ns-sym changeset
-                                                :prompt prompt
+                                                :prompt prompt :agent agent
                                                 :extra {:old old-name :new new-name})
             touched-nses (distinct (map #(store/ns-of-form-id st' %) (keys changeset)))
             ;; affected tests, judged against the PRE-rename trace map

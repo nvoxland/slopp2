@@ -85,6 +85,18 @@ the change here (same commit).
   index: a single fixed arity of 1 receives the CLI args as one vector;
   anything else is `apply`'d -main style.
 
+## P4 — Phase 4 (multi-agent)
+
+- **P4-m1 — Shared-session multi-agent = the first Phase-4 face.** One
+  server process owns THE session (store + image + db); N agents connect via
+  native MCP over streamable HTTP (`POST /mcp`, single-JSON responses,
+  notifications → 202). Concurrency safety is the item-4 substrate (atomic
+  rebasing commits; same-form → surfaced conflict; ordered persistence).
+  Every write accepts an optional `:agent` recorded on its delta —
+  provenance is per-agent from here on. Two separate server PROCESSES on one
+  store.db remain unsupported (divergent in-memory stores); that's what
+  fork/merge (m2) and replica sync (m3, deferred) are for.
+
 ## H — host
 
 - **H1 — slopp itself is Clojure/JVM** (same runtime as image + tooling; no

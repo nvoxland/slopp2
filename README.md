@@ -54,6 +54,27 @@ curl -s -X POST localhost:7357/call \
 curl -s localhost:7357/metrics    # per-call payload sizes
 ```
 
+## Multi-agent: many clients, ONE store (Phase 4)
+
+The HTTP server also speaks native MCP at `/mcp` (streamable HTTP). Point
+any number of Claude Code / Codex instances at the SAME server and they
+share one store and one live image — concurrent edits to different forms
+all land (no locks); a same-form race surfaces `{:conflict ...}` to the
+loser ("re-read and retry"):
+
+```bash
+clojure -M -m slopp.http 7357 /path/to/project-store &
+```
+
+```json
+// each agent's .mcp.json
+{"mcpServers": {"slopp": {"type": "http", "url": "http://localhost:7357/mcp"}}}
+```
+
+Give each agent an identity by passing `agent` on write calls (e.g.
+`{"agent": "alice"}`) — every delta records who did what, and
+`query_history` shows it.
+
 ## Development
 
 ```bash

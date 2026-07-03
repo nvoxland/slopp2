@@ -16,7 +16,8 @@
   [{:name "ingest"
     :description "The batch write for a BRAND-NEW namespace: land its complete source in one verified call. Cannot overwrite an existing namespace — edit its forms instead."
     :inputSchema {:type "object"
-                  :properties {:ns {:type "string"} :source {:type "string"}}
+                  :properties {:ns {:type "string"} :source {:type "string"}
+                               :agent {:type "string"}}
                   :required ["ns" "source"]}}
    {:name "ns_create"
     :description "Create a brand-new namespace, optionally with require clauses (strings like \"[clojure.string :as str]\")."
@@ -28,21 +29,21 @@
     :description "Add one require clause (e.g. \"[clojure.string :as str]\") to a namespace's ns form (tracked, hot-reloaded)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :require {:type "string"}
-                               :prompt {:type "string"}
+                               :prompt {:type "string"} :agent {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "require"]}}
    {:name "ns_remove_require"
     :description "Remove a library's require spec from a namespace's ns form (tracked, hot-reloaded)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :lib {:type "string"}
-                               :prompt {:type "string"}
+                               :prompt {:type "string"} :agent {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "lib"]}}
    {:name "edit_move"
     :description "Move a form to just before another form in its namespace — use when a definition must precede its (already-added) caller."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}
-                               :before {:type "string"} :prompt {:type "string"}}
+                               :before {:type "string"} :prompt {:type "string"} :agent {:type "string"}}
                   :required ["ns" "name" "before"]}}
    {:name "query_project"
     :description "THE orientation call: every namespace with its full outline (names, arities, doc lines, !-status, test-ness) in one response. Start here."
@@ -105,21 +106,21 @@
     :description "Replace a whole top-level form (tracked delta, hot-reload, verify)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}
-                               :source {:type "string"} :prompt {:type "string"}
+                               :source {:type "string"} :prompt {:type "string"} :agent {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "name" "source"]}}
    {:name "edit_add_form"
     :description "Add a new top-level form to a namespace (tracked delta, hot-reload, verify)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :source {:type "string"}
-                               :prompt {:type "string"}
+                               :prompt {:type "string"} :agent {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "source"]}}
    {:name "edit_delete_form"
     :description "Delete a top-level form from a namespace (tracked delta, ns-unmap, verify)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}
-                               :prompt {:type "string"}
+                               :prompt {:type "string"} :agent {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "name"]}}
    {:name "edit_subform"
@@ -127,14 +128,14 @@
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :form {:type "string"}
                                :match {:type "string"} :source {:type "string"}
-                               :prompt {:type "string"}
+                               :prompt {:type "string"} :agent {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "form" "match" "source"]}}
    {:name "edit_revert"
     :description "Revert a form to an earlier version of itself (default: previous; or a specific delta id from query_form_history). Verified and recorded like any write."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}
-                               :to {:type "string"} :prompt {:type "string"}
+                               :to {:type "string"} :prompt {:type "string"} :agent {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "name"]}}
    {:name "edit_group"
@@ -147,14 +148,14 @@
                                                             :name {:type "string"}
                                                             :source {:type "string"}}
                                                :required ["action" "ns"]}}
-                               :prompt {:type "string"}
+                               :prompt {:type "string"} :agent {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["steps"]}}
    {:name "edit_rename"
     :description "Rename a form and every reference to it, across namespaces (one coordinated delta; shadow-safe)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :old {:type "string"}
-                               :new {:type "string"} :prompt {:type "string"}
+                               :new {:type "string"} :prompt {:type "string"} :agent {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "old" "new"]}}
    {:name "edit_extract"
@@ -162,7 +163,7 @@
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :from {:type "string"}
                                :form {:type "string"} :name {:type "string"}
-                               :prompt {:type "string"}}
+                               :prompt {:type "string"} :agent {:type "string"}}
                   :required ["ns" "from" "form" "name"]}}
    {:name "checkpoint"
     :description "Mark a unit of work done: deterministically normalize the forms changed since the last checkpoint (tracked :normalize delta, re-verified), and record a boundary in the history."
@@ -287,7 +288,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
                                      (clojure.core/name k) " for " name)
                                 {}))))]
     (case name
-      "ingest"            (text (api/ingest! session (sym :ns) (:source a)))
+      "ingest"            (text (api/ingest! session (sym :ns) (:source a) :agent (:agent a)))
       "ns_create"         (text (api/create-ns! session (sym :ns)
                                                 :requires (:requires a)))
       "ns_add_require"    (text (-> (api/add-require! session (sym :ns) (:require a)
@@ -315,17 +316,20 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
                                                    :limit (or (:limit a) 10)))
       "query_macroexpand" (text (api/query-macroexpand session (:code a)))
       "edit_replace_form" (text (-> (api/edit-replace! session (sym :ns) (sym :name)
-                                                       (:source a) :prompt (:prompt a))
+                                                       (:source a) :prompt (:prompt a)
+                                                       :agent (:agent a))
                                     (select-keys [:error :warnings :existing-warnings
                                                   :untested :image-healed :test :affected :delta])
                                     (summarize (:verbose a))))
       "edit_add_form"     (text (-> (api/add-form! session (sym :ns) (:source a)
-                                                   :prompt (:prompt a))
+                                                   :prompt (:prompt a)
+                                                   :agent (:agent a))
                                     (select-keys [:error :warnings :existing-warnings
                                                   :untested :image-healed :test :affected :delta])
                                     (summarize (:verbose a))))
       "edit_delete_form"  (text (-> (api/delete-form! session (sym :ns) (sym :name)
-                                                      :prompt (:prompt a))
+                                                      :prompt (:prompt a)
+                                                      :agent (:agent a))
                                     (select-keys [:error :test :affected :delta])
                                     (summarize (:verbose a))))
       "edit_group"        (text (-> (api/edit-group!
@@ -341,7 +345,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
                                                  (:name s)   (assoc :name (symbol (:name s)))
                                                  (:source s) (assoc :source (:source s)))))
                                            (:steps a))
-                                     :prompt (:prompt a))
+                                     :prompt (:prompt a) :agent (:agent a))
                                     (select-keys [:error :step :group :warnings :existing-warnings
                                                   :image-healed :test :affected :deltas])
                                     (summarize (:verbose a))))
@@ -351,7 +355,8 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
                             (when-not (and old new)
                               (throw (ex-info "edit_rename needs :old and :new (aliases: :name/:from, :to)" {})))
                             (text (-> (api/rename! session (sym :ns) (symbol old)
-                                                   (symbol new) :prompt (:prompt a))
+                                                   (symbol new) :prompt (:prompt a)
+                                                   :agent (:agent a))
                                       (select-keys [:error :renamed :test :affected :delta])
                                       (summarize (:verbose a)))))
       "ns_remove_require" (text (-> (api/remove-require! session (sym :ns) (sym :lib)
@@ -364,18 +369,21 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
                               (throw (ex-info "edit_subform needs :match (exact subform source) and :source (its replacement)" {})))
                             (text (-> (api/edit-subform! session (sym :ns) (sym :form)
                                                          match src
-                                                         :prompt (:prompt a))
+                                                         :prompt (:prompt a)
+                                                         :agent (:agent a))
                                       (select-keys [:error :conflict :warnings :existing-warnings
                                                     :untested :image-healed :test :affected :delta :ms])
                                       (summarize (:verbose a)))))
       "edit_revert"       (text (-> (api/revert-form! session (sym :ns) (sym :name)
-                                                      :to (:to a) :prompt (:prompt a))
+                                                      :to (:to a) :prompt (:prompt a)
+                                                      :agent (:agent a))
                                     (select-keys [:error :conflict :warnings :test
                                                   :affected :delta :ms])
                                     (summarize (:verbose a))))
       "edit_move"         (text (api/move-form! session (sym :ns) (sym :name)
                                                 :before (sym :before)
-                                                :prompt (:prompt a)))
+                                                :prompt (:prompt a)
+                                                :agent (:agent a)))
       "edit_extract"      (let [subform (or (:form a) (:source a) (:subform a))]
                             (when-not subform
                               (throw (ex-info "edit_extract needs :form (the exact subform source; aliases :source/:subform accepted)" {})))

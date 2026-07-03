@@ -43,7 +43,7 @@
 (defn ingest
   "Parse `source` into `ns-sym`'s ordered elements, assigning a fresh id to each
   form, and append an `:ingest` delta. Returns the new store."
-  [store ns-sym source]
+  [store ns-sym source & {:keys [agent]}]
   (let [nodes (n/children (p/parse-string-all source))]
     (loop [store store, nodes nodes, elements []]
       (if-let [node (first nodes)]
@@ -58,15 +58,16 @@
           (-> store
               (assoc-in [:namespaces ns-sym :elements] elements)
               (update :deltas conj
-                      {:id did :parent nil :op :ingest :ns ns-sym
-                       :form-ids (into [] (keep :id) elements)
-                       ;; per-version content (C3/C4): history must be
-                       ;; reconstructible from the log alone
-                       :sources  (into {}
-                                       (keep (fn [e]
-                                               (when (:id e)
-                                                 [(:id e) (n/string (:node e))])))
-                                       elements)})))))))
+                      (cond-> {:id did :parent nil :op :ingest :ns ns-sym
+                               :form-ids (into [] (keep :id) elements)
+                               ;; per-version content (C3/C4): history must be
+                               ;; reconstructible from the log alone
+                               :sources  (into {}
+                                               (keep (fn [e]
+                                                       (when (:id e)
+                                                         [(:id e) (n/string (:node e))])))
+                                               elements)}
+                        agent (assoc :agent agent)))))))))
 
 (defn elements
   "All elements of `ns-sym` in order (forms + separators)."
@@ -97,7 +98,7 @@
   "Replace the CST node of the form named `nm` in `ns-sym`, keeping its stable id
   (C2/O1 whole-form replace); append a `:replace` delta carrying `prompt`.
   Returns [store' delta], or nil if no such form."
-  [store ns-sym nm node & {:keys [prompt op group] :or {op :replace}}]
+  [store ns-sym nm node & {:keys [prompt op group agent] :or {op :replace}}]
   (let [elems (get-in store [:namespaces ns-sym :elements])
         idx   (first (keep-indexed
                       (fn [i e] (when (and (= :form (:kind e)) (= nm (:name e))) i))
@@ -109,7 +110,8 @@
             delta    (cond-> {:id did :parent (:id (last (:deltas store)))
                               :op op :ns ns-sym :form-id (:id elem) :prompt prompt
                               :sources {(:id elem) (n/string node)}}
-                       group (assoc :group group))]
+                       group (assoc :group group)
+                       agent (assoc :agent agent))]
         [(-> store
              (assoc-in [:namespaces ns-sym :elements] (assoc elems idx new-elem))
              (update :deltas conj delta))
@@ -119,7 +121,7 @@
   "Append a new form to `ns-sym` (separated by a newline, followed by one) with
   a fresh id; ONE `:add` delta. Returns [store' delta], or nil if the namespace
   doesn't exist."
-  [store ns-sym node & {:keys [prompt group]}]
+  [store ns-sym node & {:keys [prompt group agent]}]
   (when-let [elems (get-in store [:namespaces ns-sym :elements])]
     (let [needs-nl?    (and (seq elems)
                             (not (str/ends-with? (n/string (:node (peek elems))) "\n")))
@@ -133,7 +135,8 @@
           delta        (cond-> {:id did :parent (:id (last (:deltas store)))
                                 :op :add :ns ns-sym :form-id fid :prompt prompt
                                 :sources {fid (n/string node)}}
-                         group (assoc :group group))]
+                         group (assoc :group group)
+                         agent (assoc :agent agent))]
       [(-> store'
            (assoc-in [:namespaces ns-sym :elements] new-elems)
            (update :deltas conj delta))
@@ -143,7 +146,7 @@
   "Remove the form named `nm` from `ns-sym` (plus its immediately following
   separator, so no doubled blank line remains); ONE `:delete` delta. Returns
   [store' delta], or nil if no such form."
-  [store ns-sym nm & {:keys [prompt group]}]
+  [store ns-sym nm & {:keys [prompt group agent]}]
   (let [elems (get-in store [:namespaces ns-sym :elements])
         idx   (first (keep-indexed
                       (fn [i e] (when (and (= :form (:kind e)) (= nm (:name e))) i))
@@ -159,7 +162,8 @@
                                   :op :delete :ns ns-sym :form-id fid :name nm
                                   :removed-source (n/string (:node (nth elems idx)))
                                   :prompt prompt}
-                           group (assoc :group group))]
+                           group (assoc :group group)
+                           agent (assoc :agent agent))]
         [(-> store'
              (assoc-in [:namespaces ns-sym :elements] new-elems)
              (update :deltas conj delta))
@@ -169,7 +173,7 @@
   "Move the form named `nm` (with its trailing separator) to just before the
   form named `before-nm` (S2 — fixes append-only forward references). ONE
   `:move` delta. Returns [store' delta], or nil if either form is missing."
-  [store ns-sym nm before-nm & {:keys [prompt group]}]
+  [store ns-sym nm before-nm & {:keys [prompt group agent]}]
   (let [elems  (get-in store [:namespaces ns-sym :elements])
         idx-of (fn [es n]
                  (first (keep-indexed
@@ -193,7 +197,8 @@
                            :op :move :ns ns-sym
                            :form-id (:id (nth elems i)) :before before-nm
                            :prompt prompt}
-                    group (assoc :group group))]
+                    group (assoc :group group)
+                    agent (assoc :agent agent))]
         [(-> store'
              (assoc-in [:namespaces ns-sym :elements] new-elems)
              (update :deltas conj delta))
@@ -254,15 +259,16 @@
   possibly across namespaces — as ONE delta. `changeset` = {form-id new-node}.
   `extra` is merged into the delta (e.g. {:old .. :new ..}). Returns
   [store' delta]."
-  [store op ns-sym changeset & {:keys [prompt extra]}]
+  [store op ns-sym changeset & {:keys [prompt extra agent]}]
   (let [[did store'] (gen-id store "d")
-        delta (merge {:id did :parent (:id (last (:deltas store)))
-                      :op op :ns ns-sym
-                      :form-ids (vec (sort (keys changeset)))
-                      :sources  (into {} (map (fn [[fid node]]
-                                                [fid (n/string node)]))
-                                      changeset)
-                      :prompt prompt}
+        delta (merge (cond-> {:id did :parent (:id (last (:deltas store)))
+                              :op op :ns ns-sym
+                              :form-ids (vec (sort (keys changeset)))
+                              :sources  (into {} (map (fn [[fid node]]
+                                                        [fid (n/string node)]))
+                                              changeset)
+                              :prompt prompt}
+                       agent (assoc :agent agent))
                      extra)
         store' (reduce-kv
                 (fn [st ns-key {:keys [elements]}]

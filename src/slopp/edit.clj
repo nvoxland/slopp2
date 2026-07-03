@@ -105,12 +105,12 @@
   named `form-name` in `ns-sym`, keeping its id and appending a `:replace` delta.
   Returns {:store :delta :warnings} (warnings = D6 `!`-effect violations of the
   resulting namespace) or {:error msg}."
-  [store ns-sym form-name new-source & {:keys [prompt]}]
+  [store ns-sym form-name new-source & {:keys [prompt agent]}]
   (let [{:keys [node error]} (parse-form new-source)]
     (if error
       {:error error}
       (if-let [[store' delta] (store/replace-node store ns-sym form-name node
-                                                  :prompt prompt)]
+                                                  :prompt prompt :agent agent)]
         {:store    store'
          :delta    delta
          :warnings (ns-warnings store' ns-sym)}
