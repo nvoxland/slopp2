@@ -1303,7 +1303,8 @@
                      (-> s
                          (update :lines assoc (:branch s)
                                  {:store (:store s) :conn (:db s)})
-                         (assoc :branch nm :db conn))))
+                         (assoc :branch nm :db conn
+                                :data-version (some-> conn db/data-version)))))
             {:branch nm :from branch})))))
 
 (defn- boot-line-image!
@@ -1350,6 +1351,8 @@
                                  (assoc :branch nm
                                         :db (:conn target)
                                         :store (:store target)
+                                        :data-version (some-> (:conn target)
+                                                              db/data-version)
                                         :image (or adopted (:image booted))
                                         :test-map {}))))
                     (cond-> {:switched nm}

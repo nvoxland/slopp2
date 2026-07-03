@@ -67,3 +67,38 @@
       (finally
         (api/close! s1)
         (clojure.java.shell/sh "rm" "-rf" dir)))))
+
+(deftest private-checkouts-shared-branch-storage        ; m5c
+  (let [dir (str (System/getProperty "java.io.tmpdir")
+                 "/slopp-m5c-" (System/nanoTime))
+        s1  (api/open! {:dir dir})]
+    (try
+      (api/ingest! s1 'pc.core
+                   (str "(ns pc.core)\n(defn f [x] (inc x))\n"))
+      ;; server 1 branches and works there; its checkout is ITS state
+      (api/branch! s1 "feature")
+      (api/edit-replace! s1 'pc.core 'f "(defn f [x] (+ x 50))"
+                         :prompt "feature work" :agent "server-1")
+      (let [s2 (api/open! {:dir dir})]          ; server 2: own checkout (main)
+        (try
+          (testing "checkouts are per-server: s2 is on main, unaffected"
+            (is (= "main" (:current (api/query-branches s2))))
+            (is (= [2] (api/query-eval s2 "(pc.core/f 1)"))))
+          (testing "s2 can see and switch to s1's branch (shared storage)"
+            (is (some #(= "feature" (:name %))
+                      (:branches (api/query-branches s2))))
+            (api/branch-switch! s2 "feature")
+            (is (= [51] (api/query-eval s2 "(pc.core/f 1)"))))
+          (testing "both on feature: commits flow across servers via the journal"
+            (api/edit-replace! s1 'pc.core 'f "(defn f [x] (+ x 500))"
+                               :prompt "more feature work")
+            (api/sync-with-journal! s2)
+            (is (= [501] (api/query-eval s2 "(pc.core/f 1)"))))
+          (testing "meanwhile s1 can go back to main independently"
+            (api/branch-switch! s1 "main")
+            (is (= [2] (api/query-eval s1 "(pc.core/f 1)")))
+            (is (= "feature" (:current (api/query-branches s2)))))
+          (finally (api/close! s2))))
+      (finally
+        (api/close! s1)
+        (clojure.java.shell/sh "rm" "-rf" dir)))))

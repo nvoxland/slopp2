@@ -54,7 +54,25 @@ curl -s -X POST localhost:7357/call \
 curl -s localhost:7357/metrics    # per-call payload sizes
 ```
 
-## Multi-agent: many clients, ONE store (Phase 4)
+## Multi-agent: a server per agent, ONE shared store (recommended)
+
+Every Claude Code / Codex instance spawns its OWN slopp server against the
+same project dir — zero shared infrastructure, and it's just the normal
+`.mcp.json`:
+
+```json
+{"mcpServers": {"slopp": {"command": "clojure",
+                          "args": ["-M", "-m", "slopp.mcp", "/abs/path/to/project"]}}}
+```
+
+The SQLite journal is the record: commits are conditional appends (losers
+rebase; same-form races surface `{:conflict ...}`), and every server absorbs
+the others' work before each tool call — cache, live image, and all. Each
+agent gets a PRIVATE checkout: branch_create / branch_switch are per-server
+state, so one agent lives on `feature` while another keeps `main` green,
+sharing branch storage under `.slopp/branches/`.
+
+## Multi-agent: many clients, ONE server (alternative)
 
 The HTTP server also speaks native MCP at `/mcp` (streamable HTTP). Point
 any number of Claude Code / Codex instances at the SAME server and they

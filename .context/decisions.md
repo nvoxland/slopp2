@@ -169,6 +169,20 @@ the change here (same commit).
   (foreign-delta refresh into images), m5c per-agent servers with private
   checkouts via `.mcp.json` stdio.
 
+- **P4-m5b/c — Per-agent servers on shared storage (the Phase-4 endgame,
+  user-architected).** `db/data-version` detects foreign commits for one
+  PRAGMA read; `sync-with-journal!` (called by the MCP dispatch before every
+  tool) refreshes the cache, reloads changed namespaces into the LOCAL
+  image, and invalidates touched trace entries — co-resident servers
+  converge continuously while m5a's append-CAS arbitrates their writes.
+  Checkouts are per-server state over shared branch storage: each agent's
+  `.mcp.json`-spawned stdio server holds its own branch, image, and REPL
+  runtime; `:data-version` is per-connection, so branch ops re-init it (the
+  bug the m5c test caught). The shared-HTTP single-server mode (m1) remains
+  for process-light sub-agent swarms. Deferred: incremental delta-suffix
+  refresh (full load-store per sync is fine at current scale); branch-create
+  races between servers.
+
 ## H — host
 
 - **H1 — slopp itself is Clojure/JVM** (same runtime as image + tooling; no
