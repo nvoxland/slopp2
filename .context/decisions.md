@@ -90,6 +90,19 @@ effectful fns remains allowed — that's observation) · (obs.) hot-editing a
 is unaffected; D5's defonce-preservation opt covers it if it ever matters.
 Details: `projects/tasker/REPORT.md` (untracked).
 
+## S/E — symmetric-eval findings (fresh agents driving slopp per model)
+
+S1 ✅ **every write must compile**: all hot-loads checked against the candidate
+store before commit; forward refs rejected at write time ((declare) is the
+mutual-recursion escape); partial group loads restore a fresh image. This
+transformed weak-model runs (haiku: +114% vs Go → beat Go outright on
+inventory). S2 ✅ `edit_move` (stylistic/structural reorder; `:move` delta) ·
+✅ `ns_remove_require` + unknown-tool errors list available tools (agents
+invented both names) · E1 ✅ edit_rename arg aliases + clear missing-arg
+errors (every sonnet/opus run guessed name/to first) · E2 ✅ SKILL.md teaches
+the two-write red-first TDD shape (fn+test in one group → honest red →
+replace). Full data: `benchmarks/results.md` symmetric-eval sections.
+
 ## B — benchmark/baseline findings
 
 B1 ✅ **terse green responses** (from the Go-baseline comparison): MCP write
