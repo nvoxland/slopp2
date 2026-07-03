@@ -24,6 +24,8 @@
             [slopp.normalize :as normalize]
             [slopp.db :as db]))
 
+(declare run-verification!)
+
 (defn- start-spare!
   "Kick off a background-warming spare image (D5 warm spare) if enabled."
   [session]
@@ -63,26 +65,35 @@
       (db/persist! db store (last (store/deltas store))))))
 
 (defn ingest!
-  "Ingest `source` as `ns-sym`: load it into the live image FIRST, and only
-  commit to the store when the load succeeds — a failed load (bad require,
-  compile error) returns {:error msg} with nothing committed, never a silent
-  store/image drift (T4). Returns {:ns :forms} on success."
+  "The batch write for BRAND-NEW namespaces (W1, user decision): land a whole
+  namespace's source in one call. Compile-gated like every write (the image
+  loads it FIRST; a failed load commits nothing — T4), then verified and
+  recorded like every write. Overwriting an existing namespace is NOT allowed
+  — edit its forms instead. Returns {:ns :forms :test} or {:error msg}."
   [session ns-sym source]
-  (try
-    (let [candidate (store/ingest (:store @session) ns-sym source)
-          res (repl/load-checked! (:image @session)
-                                  (render/render-ns candidate ns-sym)
-                                  (render/ns-path ns-sym))]
-      (if (:err res)
-        {:error (str "namespace failed to load: " (:err res))}
-        (do (swap! session assoc :store candidate)
-            (persist-last! session)
-            (repl/eval! (:image @session)
-                        (format "(dosync (commute (deref #'clojure.core/*loaded-libs*) conj '%s))"
-                                ns-sym))
-            {:ns ns-sym :forms (count (store/forms candidate ns-sym))})))
-    (catch Exception e
-      {:error (str "unparseable source (unbalanced?): " (ex-message e))})))
+  (if (get-in (:store @session) [:namespaces ns-sym])
+    {:error (str ns-sym " already exists — edit its forms instead"
+                 " (whole-namespace overwrite is not allowed)")}
+    (try
+      (let [candidate (store/ingest (:store @session) ns-sym source)
+            res (repl/load-checked! (:image @session)
+                                    (render/render-ns candidate ns-sym)
+                                    (render/ns-path ns-sym))]
+        (if (:err res)
+          {:error (str "namespace failed to load: " (:err res))}
+          (do (swap! session assoc :store candidate)
+              (persist-last! session)
+              (repl/eval! (:image @session)
+                          (format "(dosync (commute (deref #'clojure.core/*loaded-libs*) conj '%s))"
+                                  ns-sym))
+              (let [summary (run-verification! session ns-sym nil)]
+                (swap! session update :store store/record-verification ns-sym summary)
+                (persist-last! session)
+                {:ns ns-sym
+                 :forms (count (store/forms candidate ns-sym))
+                 :test summary}))))
+      (catch Exception e
+        {:error (str "unparseable source (unbalanced?): " (ex-message e))}))))
 
 (defn create-ns!
   "F4: create a brand-new namespace, optionally with `:requires` (clause

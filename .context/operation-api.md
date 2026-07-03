@@ -46,7 +46,7 @@ by convention it must not redefine code; redefinition belongs to edit ops).
 Every edit ends with `run-verification!` (affected-narrowed, diagnosed) and a
 `:verify` delta. Result shape: `{:delta :warnings :test :affected}` +
 `{:error msg}` on validation failure. **Keep return shapes tidy maps** —
-`ingest!` still returns the session atom (F8, fix pending).
+every op, `ingest!` included (`{:ns :forms}` / `{:error}`), returns one (F8).
 
 ## `slopp.refactor` (rename mechanics)
 

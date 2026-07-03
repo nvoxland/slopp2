@@ -35,7 +35,8 @@ Server: `clojure -M -m slopp.mcp` (stdio) from the slopp repo.
 
 | Situation | Tool |
 |---|---|
-| New namespace | `ns_create` (create dependencies FIRST — a require of a not-yet-created ns fails) |
+| New namespace, content known up front | `ingest` — the whole namespace's source in ONE verified call (new namespaces only; never overwrites) |
+| New namespace, building incrementally | `ns_create` (create dependencies FIRST — a require of a not-yet-created ns fails) |
 | New/removed require | `ns_add_require` / `ns_remove_require` (never hand-edit the ns form) |
 | New function/test | `edit_add_form` (one form per call) |
 | Change a function | `edit_replace_form` (submit the whole new form) |

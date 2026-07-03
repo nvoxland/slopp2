@@ -26,6 +26,30 @@
           (is (= 2 (:forms r)))))
       (finally (api/close! sess)))))
 
+(deftest ingest-is-the-batch-write-for-NEW-namespaces   ; W1 (user decision)
+  (let [sess (api/open!)]
+    (try
+      (testing "a whole namespace lands in one verified write"
+        (let [r (api/ingest! sess 'w1.core
+                             (str "(ns w1.core (:require [clojure.test :refer [deftest is]]))\n"
+                                  "(defn triple [x] (* 3 x))\n"
+                                  "(deftest triple-t (is (= 9 (triple 3))))\n"))]
+          (is (= 3 (:forms r)))
+          (is (= 1 (:pass (:test r))))
+          (is (zero? (+ (:fail (:test r)) (:error (:test r)))))))
+      (testing "red tests are reported (commit stands; compile failures don't commit)"
+        (let [r (api/ingest! sess 'w1.red
+                             (str "(ns w1.red (:require [clojure.test :refer [deftest is]]))\n"
+                                  "(defn f [x] x)\n"
+                                  "(deftest f-t (is (= 2 (f 1))))\n"))]
+          (is (= 1 (:fail (:test r))))
+          (is (seq (get-in r [:test :failures])))))
+      (testing "overwriting an existing namespace is NOT allowed"
+        (let [r (api/ingest! sess 'w1.core "(ns w1.core)\n(def replaced 1)\n")]
+          (is (re-find #"already exists" (:error r)))
+          (is (re-find #"triple" (api/query-source sess 'w1.core)))))
+      (finally (api/close! sess)))))
+
 (deftest create-ns-and-add-require                     ; F4 + F5
   (let [sess (api/open!)]
     (try

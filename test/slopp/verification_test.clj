@@ -40,13 +40,13 @@
                                    :prompt "retarget")]
           (is (= ['vdemo/mul-t] (:affected r)))
           (is (= 1 (:pass (:test r))))))
-      (testing "without trace info the whole namespace runs (conservative fallback)"
+      (testing "ingest itself seeds the trace map (W1): edits narrow immediately"
         (let [sess2 (api/open!)]
           (try
             (api/ingest! sess2 'vdemo target)
             (let [r (api/edit-replace! sess2 'vdemo 'mul "(defn mul [x y] (* y x))")]
-              (is (= :all (:affected r)))
-              (is (= 2 (:test (:test r)))))
+              (is (= ['vdemo/mul-t] (:affected r)))
+              (is (= 1 (:test (:test r)))))
             (finally (api/close! sess2)))))
       (finally (api/close! sess)))))
 

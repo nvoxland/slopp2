@@ -14,7 +14,7 @@
 
 (def tools
   [{:name "ingest"
-    :description "Ingest source as a namespace and load it into the live image."
+    :description "The batch write for a BRAND-NEW namespace: land its complete source in one verified call. Cannot overwrite an existing namespace — edit its forms instead."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :source {:type "string"}}
                   :required ["ns" "source"]}}
