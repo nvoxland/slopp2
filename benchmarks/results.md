@@ -53,3 +53,32 @@ wordstats 427/542 payload tokens in/out):
 | 2026-07-02 | 520b41c | calculator | 2 | 11 | 1305 | 725 | 590 |
 | 2026-07-02 | 520b41c | inventory | 1 | 7 | 84 | 345 | 311 |
 | 2026-07-02 | 520b41c | wordstats | 1 | 8 | 1236 | 427 | 370 |
+
+## Symmetric eval, wave 1: fresh agents driving SLOPP (calculator, 2026-07-02 @ 42d677e)
+
+Same protocol as the Go baselines (fresh sub-agents, only SKILL.md + the spec),
+but building through slopp over the HTTP transport. Payload = server-side
+/metrics; true tokens/duration from the harness.
+
+| model | workflow | true tokens | duration | tool calls | payload in | payload out | outcome |
+|---|---|---|---|---|---|---|---|
+| opus   | Go files | 18,687 | 85s  | 11 | 865  | 8    | clean |
+| opus   | slopp    | 23,455 | 131s | 13 | 546  | 143  | clean, linear (11 calls, 0 red) |
+| sonnet | Go files | 27,766 | 127s | 23 | 1112 | 200  | clean TDD |
+| sonnet | slopp    | 50,974 | 423s | 43 | 2090 | 1958 | green, but fought S1+S2 |
+| haiku  | Go files | 19,574 | 97s  | 14 | 770  | 73   | clean |
+| haiku  | slopp    | 41,899 | 460s | 93 | 3499 | 2216 | green after heavy flailing (38 query_evals, 3 restarts) |
+
+Honest read: on a tiny greenfield app, slopp costs MORE true tokens than files
+today (opus +25%, sonnet +84%, haiku +114%). Opus's clean run shows the floor:
+payload-in -37% vs its Go run, perfectly linear workflow, terse greens held.
+The weaker-model blowups were dominated by two product defects the eval
+surfaced (exactly what it was for):
+- S1: hot-load of a non-compiling form is UNCHECKED -- commits to the store,
+  image silently keeps/lacks the var, agent sees {:ok :ran 0} instead of red.
+- S2: add_form only appends -> top-down authoring creates forward refs that
+  break fresh loads; no reorder op (agents did delete+re-add dances).
+Also: agents invented plausible tools (help, ns_remove_require) -- add the
+symmetric ops or suggest nearest-tool in the unknown-tool error.
+Waves 2-3 (inventory, wordstats) deferred until S1/S2 are fixed -- rerunning
+known defects wastes runs.
