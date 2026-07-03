@@ -199,6 +199,36 @@
              (update :deltas conj delta))
          delta]))))
 
+(defn- ns-requires
+  "Store namespaces required by `ns-sym`'s ns form."
+  [store ns-sym]
+  (when-let [e (form-named store ns-sym ns-sym)]
+    (let [s (n/sexpr (:node e))]
+      (for [clause s
+            :when (and (seq? clause) (= :require (first clause)))
+            spec (rest clause)
+            :let [lib (if (vector? spec) (first spec) spec)]
+            :when (contains? (:namespaces store) lib)]
+        lib))))
+
+(defn ns-dependency-order
+  "Every store namespace, dependencies first (X3): image loads MUST use this —
+  a plain (keys (:namespaces store)) goes hash-ordered past 8 entries, which
+  silently half-loaded 12-namespace images in eval round 3. Deterministic:
+  ties break by sorted name; cycles fall back to sorted remainder."
+  [store]
+  (let [deps (into {}
+                   (map (fn [n] [n (set (ns-requires store n))]))
+                   (keys (:namespaces store)))]
+    (loop [result [], remaining (vec (sort (keys deps))), done #{}]
+      (if (empty? remaining)
+        result
+        (if-let [ready (first (filter #(every? done (deps %)) remaining))]
+          (recur (conj result ready)
+                 (vec (remove #{ready} remaining))
+                 (conj done ready))
+          (into result remaining))))))
+
 (defn ns-of-form-id
   "The namespace whose elements contain the form with `id`, or nil."
   [store id]

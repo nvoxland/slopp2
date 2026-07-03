@@ -275,7 +275,7 @@
       "test_run"          (text (api/test-run! session (sym :ns)
                                                :only (some->> (:only a) (mapv symbol))))
       "restart"           (do (api/restart! session) (text "restarted"))
-      "build"             (text (str "built at " (api/build! session (:dir a))))
+      "build"             (text (api/build! session (:dir a)))
       (throw (ex-info (str "unknown tool: " name ". Available: "
                            (str/join ", " (map :name tools)))
                       {})))))

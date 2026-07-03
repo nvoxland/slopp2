@@ -11,11 +11,13 @@
   (C1 no-disk), so without the mark a later `(:require ns-sym)` from another
   store namespace would hit the classpath and fail."
   [handle store ns-sym]
-  (repl/load! handle (render/render-ns store ns-sym) (render/ns-path ns-sym))
-  (repl/eval! handle
-              (format "(dosync (commute (deref #'clojure.core/*loaded-libs*) conj '%s))"
-                      ns-sym))
-  nil)
+  (let [res (repl/load-checked! handle
+                                (render/render-ns store ns-sym)
+                                (render/ns-path ns-sym))]
+    (repl/eval! handle
+                (format "(dosync (commute (deref #'clojure.core/*loaded-libs*) conj '%s))"
+                        ns-sym))
+    (:err res)))
 
 (defn test-run
   "Run `ns-sym`'s clojure.test tests in the live image; returns the summary map

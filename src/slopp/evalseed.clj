@@ -78,7 +78,7 @@
           (when-not (zero? (+ (:fail r) (:error r)))
             (throw (ex-info (str "seed not green in " ns-sym) r)))))
       (api/checkpoint! sess :label "seed: tasker v1")
-      (api/build! sess (str dir "-files"))
+      (api/build! sess (.getAbsolutePath (clojure.java.io/file (str dir "-files"))))
       (finally (api/close! sess)))))
 
 ;; --- round 3: the SCALE seed (12 interconnected namespaces) ---
@@ -271,7 +271,7 @@
           (when-not (zero? (+ (get-in r [:test :fail]) (get-in r [:test :error])))
             (throw (ex-info (str ns-sym " not green") r)))))
       (api/checkpoint! sess :label "seed: orders v1")
-      (api/build! sess (str dir "-files"))
+      (api/build! sess (.getAbsolutePath (clojure.java.io/file (str dir "-files"))))
       (finally (api/close! sess)))))
 
 (defn -main [& [which dir]]

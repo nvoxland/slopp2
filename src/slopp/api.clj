@@ -44,8 +44,9 @@
          session (atom {:store store :image image :db conn
                         :warm-spare? (boolean warm-spare?)})]
      (start-spare! session)
-     (doseq [ns-sym (keys (:namespaces store))]
-       (image/load-ns! image store ns-sym))
+     (doseq [ns-sym (store/ns-dependency-order store)]     ; X3: deps first
+       (when-let [err (image/load-ns! image store ns-sym)]
+         (throw (ex-info (str "image load failed for " ns-sym ": " err) {}))))
      session)))
 
 (defn close! [session]
@@ -251,8 +252,9 @@
     (swap! session assoc :image fresh :spare nil)
     (start-spare! session)
     (let [{:keys [store image]} @session]
-      (doseq [ns-sym (keys (:namespaces store))]
-        (image/load-ns! image store ns-sym)))))
+      (doseq [ns-sym (store/ns-dependency-order store)]    ; X3: deps first
+        (when-let [err (image/load-ns! image store ns-sym)]
+          (throw (ex-info (str "restart load failed for " ns-sym ": " err) {})))))))
 
 (defn restart!
   "D5 escape hatch: the agent-callable fresh-image restart."
@@ -673,8 +675,12 @@
                                                              (seq (set/intersection forms changed-syms)))
                                                      (if (= t qold) qnew t))))
                                            sort vec)]
-                             (when (seq hits) hits)))]
-        (if-let [err (hot-load-all! session st' (keys changeset))]
+                             (when (seq hits) hits)))
+            ;; X2: the renamed DEFINITION must reload before its callers —
+            ;; hash-map key order destroyed cross-ns renames at scale
+            def-id       (:id (store/form-named st' ns-sym new-name))
+            ordered-ids  (into [def-id] (remove #{def-id} (keys changeset)))]
+        (if-let [err (hot-load-all! session st' ordered-ids)]
           {:error (str "rename failed to compile: " err)}
           (do
             (swap! session assoc :store st')
@@ -738,12 +744,28 @@
 
 (defn build!
   "C1/C6 explicit build: materialize a runnable project under `dir` —
-  `src/<ns-path>.clj` for every namespace plus a minimal `deps.edn` (F8), so
-  the output runs with plain `clojure -M -e ...` from `dir`."
+  `src/<ns-path>.clj` per namespace plus a minimal `deps.edn` (F8). Guarded
+  (X4: an eval agent once built into the host repo, clobbering its deps.edn):
+  absolute paths only, never a directory enclosing the running process, and an
+  existing deps.edn is never overwritten."
   [session dir]
-  (doseq [ns-sym (keys (:namespaces (:store @session)))]
-    (let [file (io/file dir "src" (render/ns-path ns-sym))]
-      (io/make-parents file)
-      (spit file (render/render-ns (:store @session) ns-sym))))
-  (spit (io/file dir "deps.edn") "{:paths [\"src\"]}\n")
-  dir)
+  (let [f      (io/file dir)
+        target (.getCanonicalFile f)
+        cwd    (.getCanonicalFile (io/file "."))]
+    (cond
+      (not (.isAbsolute f))
+      {:error "build needs an ABSOLUTE directory path"}
+
+      (.startsWith (.toPath cwd) (.toPath target))
+      {:error (str "refusing to build into " target
+                   " — it contains the running system")}
+
+      :else
+      (do (doseq [ns-sym (keys (:namespaces (:store @session)))]
+            (let [file (io/file target "src" (render/ns-path ns-sym))]
+              (io/make-parents file)
+              (spit file (render/render-ns (:store @session) ns-sym))))
+          (let [de (io/file target "deps.edn")]
+            (when-not (.exists de)
+              (spit de "{:paths [\"src\"]}\n")))
+          {:built (str target)}))))

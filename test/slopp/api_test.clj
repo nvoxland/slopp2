@@ -37,5 +37,11 @@
                                                   (make-array FileAttribute 0)))]
           (api/build! sess dir)
           (is (= (api/query-source sess 'demo) (slurp (str dir "/src/demo.clj"))))
-          (is (.exists (clojure.java.io/file dir "deps.edn")))))
+          (is (.exists (clojure.java.io/file dir "deps.edn")))
+          (testing "X4 guard: never into the running system, absolute only, no deps.edn clobber"
+            (is (:error (api/build! sess ".")))
+            (is (:error (api/build! sess (System/getProperty "user.dir"))))
+            (spit (str dir "/deps.edn") "{:paths [\"src\"] :custom true}\n")
+            (api/build! sess dir)
+            (is (re-find #":custom" (slurp (str dir "/deps.edn")))))))
       (finally (api/close! sess)))))

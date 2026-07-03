@@ -69,6 +69,46 @@
         (is (:error (api/move-form! sess 's2.core 'helper :before 'nope))))
       (finally (api/close! sess)))))
 
+(deftest x3-image-loads-follow-dependency-order
+  ;; 12 chained namespaces: >8 entries puts the store's ns map in hash order,
+  ;; which used to drive restart loads -> silent half-loaded images (round 3).
+  (let [sess (api/open!)]
+    (try
+      (api/create-ns! sess 'x3.n1)
+      (api/add-form! sess 'x3.n1 "(defn f1 [x] (inc x))")
+      (doseq [i (range 2 13)]
+        (let [ns-sym  (symbol (str "x3.n" i))
+              prev    (str "x3.n" (dec i))]
+          (api/create-ns! sess ns-sym
+                          :requires [(str "[" prev " :as p]")])
+          (api/add-form! sess ns-sym
+                         (format "(defn f%d [x] (p/f%d x))" i (dec i)))))
+      (api/restart! sess)
+      (testing "after restart, EVERY namespace in the 12-deep chain is live"
+        ;; f2..f12 delegate down to f1 (a single inc): f12(1) = 2
+        (is (= [2] (api/query-eval sess "(x3.n12/f12 1)"))))
+      (finally (api/close! sess)))))
+
+(deftest x2-rename-loads-the-definition-first
+  ;; many cross-ns callers -> pre-fix, hash-ordered changeset loads could
+  ;; reload a caller before the renamed def existed (destructive failure).
+  (let [sess (api/open!)]
+    (try
+      (api/create-ns! sess 'x2.m)
+      (api/add-form! sess 'x2.m "(defn f [x] (* 2 x))")
+      (doseq [i (range 1 10)]
+        (let [ns-sym (symbol (str "x2.c" i))]
+          (api/create-ns! sess ns-sym :requires ["[x2.m :as m]"])
+          (api/add-form! sess ns-sym (format "(defn call%d [x] (m/f x))" i))))
+      (let [r (api/rename! sess 'x2.m 'f 'g :prompt "x2 regression")]
+        (is (nil? (:error r)))
+        (is (= 10 (get-in r [:renamed :forms]))))
+      (testing "image consistent immediately and after a fresh restart"
+        (is (= [14] (api/query-eval sess "(x2.c9/call9 7)")))
+        (api/restart! sess)
+        (is (= [14] (api/query-eval sess "(x2.c9/call9 7)"))))
+      (finally (api/close! sess)))))
+
 (deftest remove-require-is-symmetric
   (let [sess (api/open!)]
     (try
