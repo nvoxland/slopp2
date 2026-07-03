@@ -25,7 +25,7 @@
             [slopp.build :as build]
             [slopp.db :as db]))
 
-(declare run-verification! forms-changed-since)
+(declare run-verification! forms-changed-since query-outline)
 
 (defn- start-spare!
   "Kick off a background-warming spare image (D5 warm spare) if enabled."
@@ -178,6 +178,33 @@
        (take limit)
        (mapv #(select-keys % [:id :op :ns :prompt :label :group
                               :form-id :form-ids :old :new :before]))))
+
+(defn query-project
+  "The WHOLE store's shape in one call: every namespace with its outline
+  (item 1 — orientation was ~90% of tool calls in successful runs; this
+  replaces the namespaces→outline×N chain)."
+  [session]
+  (mapv (fn [ns-sym] (query-outline session ns-sym))
+        (sort (keys (:namespaces (:store @session))))))
+
+(defn query-search
+  "The missing grep: regex over all store source, form-addressed results
+  [{:ns :form :line}], capped at `:limit` (default 30)."
+  [session pattern & {:keys [limit] :or {limit 30}}]
+  (try
+    (let [re (re-pattern pattern)
+          st (:store @session)]
+      (->> (for [ns-sym (sort (keys (:namespaces st)))
+                 e      (store/forms st ns-sym)
+                 line   (str/split-lines (n/string (:node e)))
+                 :when  (re-find re line)]
+             {:ns ns-sym
+              :form (or (:name e) (:id e))
+              :line (str/trim line)})
+           (take limit)
+           vec))
+    (catch Exception ex
+      {:error (str "bad pattern: " (ex-message ex))})))
 
 (defn query-eval
   "Observe-only eval against the live image (the oracle): call anything —

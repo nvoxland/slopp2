@@ -15,10 +15,11 @@ Server: `clojure -M -m slopp.mcp` (stdio) from the slopp repo.
 
 ## The workflow loop
 
-1. **Orient cheaply.** `query_namespaces` → what exists. `query_outline {ns}`
-   → names, arities, doc lines, `!`-effect status, test-ness. Only then read
-   actual code, one form at a time (`query_symbol`), or a whole namespace
-   (`query_source`) when you truly need it.
+1. **Orient with ONE call.** `query_project` → every namespace with its full
+   outline (names, arities, doc lines, `!`-effect status, test-ness). Then
+   `query_search {pattern}` to FIND things (the grep — search before reading),
+   and read actual code one form at a time (`query_symbol`); `query_source`
+   for a whole namespace only when you truly need it.
 2. **Write with intent.** Every write takes a `prompt` — one line of *why*.
    It becomes permanent provenance (`query_lineage` shows a form's life as
    add → replace → rename with your reasons). Don't skip it.

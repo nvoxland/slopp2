@@ -44,6 +44,15 @@
                   :properties {:ns {:type "string"} :name {:type "string"}
                                :before {:type "string"} :prompt {:type "string"}}
                   :required ["ns" "name" "before"]}}
+   {:name "query_project"
+    :description "THE orientation call: every namespace with its full outline (names, arities, doc lines, !-status, test-ness) in one response. Start here."
+    :inputSchema {:type "object" :properties {}}}
+   {:name "query_search"
+    :description "Regex search across all store source; form-addressed hits [{:ns :form :line}]. Search before reading source."
+    :inputSchema {:type "object"
+                  :properties {:pattern {:type "string"}
+                               :limit {:type "integer"}}
+                  :required ["pattern"]}}
    {:name "query_namespaces"
     :description "List every namespace in the store with its form count (orient here first)."
     :inputSchema {:type "object" :properties {}}}
@@ -205,6 +214,9 @@
                                     (select-keys [:error :warnings :existing-warnings
                                                   :test :affected :delta])
                                     (summarize (:verbose a))))
+      "query_project"     (text (api/query-project session))
+      "query_search"      (text (api/query-search session (:pattern a)
+                                                  :limit (or (:limit a) 30)))
       "query_namespaces"  (text (api/query-namespaces session))
       "query_outline"     (text (api/query-outline session (sym :ns)))
       "query_source"      (text (api/query-source session (sym :ns)))
