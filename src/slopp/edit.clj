@@ -117,9 +117,10 @@
         {:error (str "no form named " form-name " in " ns-sym)}))))
 
 (defn hot-load-form!
-  "Hot-reload one COMMITTED form into the image, padded with newlines to its
-  VFS row and attributed to its VFS path — so stack traces keep citing the
-  exact lines `query-source` shows (F6)."
+  "Hot-reload one form (from a store VALUE — commit only on success, S1) into
+  the image, padded with newlines to its VFS row and attributed to its VFS
+  path so stack traces cite the exact lines `query-source` shows (F6).
+  Returns nil on success, or the compile/load error message."
   [image store form-id]
   (let [ns-sym  (store/ns-of-form-id store form-id)
         elems   (store/elements store ns-sym)
@@ -131,17 +132,53 @@
                   (str "(in-ns '" ns-sym ")\n"
                        (apply str (repeat (- row 2) "\n")) src)
                   (str "(in-ns '" ns-sym ") " src))]
-    (repl/load! image padded (render/ns-path ns-sym))))
+    (:err (repl/load-checked! image padded (render/ns-path ns-sym)))))
 
 (defn apply-replace!
   "Pipeline through hot-reload over `system` {:store store :image handle}:
-  `replace-form`, then on success redefine the form in the live image (D5).
-  Returns {:system {:store ...} :delta :warnings} or {:error msg}."
+  `replace-form`, then redefine the form in the live image (D5) — a form that
+  fails to COMPILE rejects the whole edit (S1; nothing to commit). Returns
+  {:system {:store ...} :delta :warnings} or {:error msg}."
   [system ns-sym form-name new-source & {:keys [prompt]}]
   (let [r (replace-form (:store system) ns-sym form-name new-source :prompt prompt)]
-    (if (:error r)
-      r
-      (do (hot-load-form! (:image system) (:store r) (:form-id (:delta r)))
-          {:system   (assoc system :store (:store r))
-           :delta    (:delta r)
-           :warnings (:warnings r)}))))
+    (cond
+      (:error r) r
+
+      :else
+      (if-let [err (hot-load-form! (:image system) (:store r)
+                                   (:form-id (:delta r)))]
+        {:error (str "form failed to compile: " err)}
+        {:system   (assoc system :store (:store r))
+         :delta    (:delta r)
+         :warnings (:warnings r)}))))
+
+(defn remove-require-source
+  "Symmetric counterpart of add-require-source: structurally remove the
+  require spec for `lib` from an ns form's source. Returns {:src new-src} or
+  {:error msg}."
+  [ns-source lib]
+  (try
+    (let [zloc (z/of-string ns-source)
+          rq   (z/find-value zloc z/next :require)]
+      (if-not rq
+        {:error "no :require clause"}
+        (let [spec (->> (z/right rq)
+                        (iterate z/right)
+                        (take-while some?)
+                        (filter #(let [s (z/sexpr %)]
+                                   (or (= lib s)
+                                       (and (vector? s) (= lib (first s))))))
+                        first)]
+          (if-not spec
+            {:error (str lib " is not required")}
+            (let [root   (z/root-string (z/remove spec))
+                  zloc2  (z/of-string root)
+                  clause (z/up (z/find-value zloc2 z/next :require))
+                  vals*  (remove #(or (n/whitespace? %) (n/comment? %))
+                                 (n/children (z/node clause)))]
+              ;; drop the whole clause if only `:require` itself remains
+              {:src (if (= 1 (count vals*))
+                      (z/root-string (z/remove clause))
+                      root)})))))
+    (catch Exception e
+      {:error (str "remove-require failed: " (ex-message e))})))

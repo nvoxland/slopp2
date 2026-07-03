@@ -155,6 +155,40 @@
              (update :deltas conj delta))
          delta]))))
 
+(defn move-form
+  "Move the form named `nm` (with its trailing separator) to just before the
+  form named `before-nm` (S2 — fixes append-only forward references). ONE
+  `:move` delta. Returns [store' delta], or nil if either form is missing."
+  [store ns-sym nm before-nm & {:keys [prompt group]}]
+  (let [elems  (get-in store [:namespaces ns-sym :elements])
+        idx-of (fn [es n]
+                 (first (keep-indexed
+                         (fn [i e] (when (and (= :form (:kind e)) (= n (:name e))) i))
+                         es)))
+        i (idx-of elems nm)
+        j (idx-of elems before-nm)]
+    (when (and i j (not= nm before-nm))
+      (let [unit-end  (if (and (< (inc i) (count elems))
+                               (= :sep (:kind (nth elems (inc i)))))
+                        (+ i 2)
+                        (inc i))
+            unit      (subvec elems i unit-end)
+            without   (into (subvec elems 0 i) (subvec elems unit-end))
+            j'        (idx-of without before-nm)
+            new-elems (-> (subvec without 0 j')
+                          (into unit)
+                          (into (subvec without j')))
+            [did store'] (gen-id store "d")
+            delta (cond-> {:id did :parent (:id (last (:deltas store)))
+                           :op :move :ns ns-sym
+                           :form-id (:id (nth elems i)) :before before-nm
+                           :prompt prompt}
+                    group (assoc :group group))]
+        [(-> store'
+             (assoc-in [:namespaces ns-sym :elements] new-elems)
+             (update :deltas conj delta))
+         delta]))))
+
 (defn ns-of-form-id
   "The namespace whose elements contain the form with `id`, or nil."
   [store id]

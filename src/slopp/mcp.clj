@@ -31,6 +31,19 @@
                                :prompt {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "require"]}}
+   {:name "ns_remove_require"
+    :description "Remove a library's require spec from a namespace's ns form (tracked, hot-reloaded)."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :lib {:type "string"}
+                               :prompt {:type "string"}
+                               :verbose {:type "boolean"}}
+                  :required ["ns" "lib"]}}
+   {:name "edit_move"
+    :description "Move a form to just before another form in its namespace — use when a definition must precede its (already-added) caller."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :name {:type "string"}
+                               :before {:type "string"} :prompt {:type "string"}}
+                  :required ["ns" "name" "before"]}}
    {:name "query_namespaces"
     :description "List every namespace in the store with its form count (orient here first)."
     :inputSchema {:type "object" :properties {}}}
@@ -190,12 +203,21 @@
                                                  (sym :new) :prompt (:prompt a))
                                     (select-keys [:error :renamed :test :affected :delta])
                                     (summarize (:verbose a))))
+      "ns_remove_require" (text (-> (api/remove-require! session (sym :ns) (sym :lib)
+                                                         :prompt (:prompt a))
+                                    (select-keys [:error :test :affected :delta])
+                                    (summarize (:verbose a))))
+      "edit_move"         (text (api/move-form! session (sym :ns) (sym :name)
+                                                :before (sym :before)
+                                                :prompt (:prompt a)))
       "checkpoint"        (text (api/checkpoint! session :label (:label a)))
       "test_run"          (text (api/test-run! session (sym :ns)
                                                :only (some->> (:only a) (mapv symbol))))
       "restart"           (do (api/restart! session) (text "restarted"))
       "build"             (text (str "built at " (api/build! session (:dir a))))
-      (throw (ex-info (str "unknown tool: " name) {})))))
+      (throw (ex-info (str "unknown tool: " name ". Available: "
+                           (str/join ", " (map :name tools)))
+                      {})))))
 
 (defn handle
   "Dispatch a JSON-RPC request map; return a response map, or nil for

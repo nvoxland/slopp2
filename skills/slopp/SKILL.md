@@ -36,12 +36,19 @@ Server: `clojure -M -m slopp.mcp` (stdio) from the slopp repo.
 | Situation | Tool |
 |---|---|
 | New namespace | `ns_create` (create dependencies FIRST — a require of a not-yet-created ns fails) |
-| New require | `ns_add_require` (never hand-edit the ns form) |
+| New/removed require | `ns_add_require` / `ns_remove_require` (never hand-edit the ns form) |
 | New function/test | `edit_add_form` (one form per call) |
 | Change a function | `edit_replace_form` (submit the whole new form) |
 | Change SEVERAL forms for one reason | `edit_group` — atomic, verified once; sequencing single edits burns a false red + a restart between them |
 | Rename anything | `edit_rename` — rewrites the def + every reference across namespaces, shadow-safe; NEVER rename by editing call sites yourself |
+| Reorder forms | `edit_move` (form X to just before form Y) |
 | Delete | `edit_delete_form` |
+
+**Every write must compile.** A form referencing something undefined is
+rejected on the spot (`{:error "...failed to compile: Unable to resolve..."}`)
+— nothing commits. So **define callees before callers**; for mutual recursion
+add `(declare name)` first, exactly as in ordinary Clojure. Do NOT work around
+a compile rejection with stub definitions — add the real dependency first.
 
 ## Reading results
 
