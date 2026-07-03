@@ -76,3 +76,16 @@ stdout/console IO is NOT a `!` trigger; if IO tracking ever matters it becomes
 a separate `:effects` fact, never a naming rule · F8 ✅ (ingest tidy-return; `:untested`
 flag on edits no test exercises; `build!` emits `src/` + minimal `deps.edn`).
 Details: `projects/calculator/REPORT.md` (untracked) and `.context/dogfooding.md`.
+
+## T — tasker user-test findings (round 2, through the MCP wire)
+
+T1 ✅ deftests exempt from the `!` rule (were nagged "store-t → store-t!") ·
+T2 ✅ orientation queries (`query_namespaces`, `query_outline`) — the gap cost
+~521 tokens + prior ns-name knowledge · T3 (open) warnings-list noise (full ns
+violation list repeats on every write) · T4 (open) ns creation-order
+sensitivity (require of a not-yet-created store ns fails; create dependencies
+first) · T5 (open) `query_eval` can mutate — observe-only is convention, not
+enforced; a read-gate would make provenance airtight · (obs.) hot-editing a
+`(def x (atom ...))` form resets its in-image state — tests re-seed so verify
+is unaffected; D5's defonce-preservation opt covers it if it ever matters.
+Details: `projects/tasker/REPORT.md` (untracked).

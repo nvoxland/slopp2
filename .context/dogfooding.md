@@ -37,3 +37,21 @@ and **token cost** (chars/4 of the JSON actually sent/received through
   product as it's meant to be used. When a script changes, note it in the
   results row; wall/token comparisons are only valid between rows with the
   same script version.
+
+## Conventional-workflow baselines (one-time rows)
+
+The same three apps built in **Go by fresh sub-agents** (no context from the
+slopp side), one run per model (haiku/sonnet/opus), conventional files +
+`go test` workflow. Instrumentation is mechanical so metrics come from
+artifacts, not self-reports: `git commit` after every write (tok-in = summed
+byte sizes of changed `.go` files per commit), every test run tee'd to
+`.runs/` (tok-out), `date +%s` stamps (wall). Measured by
+`benchmarks/measure_go_baseline.sh`; recorded once per app×model with
+`v = go-<model>`.
+
+**Comparability caveats (keep honest):** Go wall time includes the agent's
+thinking time; slopp script rows are deterministic replays (no thinking, no
+model). Token metrics compare the *workflow shape* (whole-file writes + test
+output reads vs. form writes + structured results) — that's the comparison
+that matters. A fully symmetric eval (fresh agents driving slopp over MCP per
+model) is roadmap #1 territory.
