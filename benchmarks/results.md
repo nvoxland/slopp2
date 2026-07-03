@@ -143,3 +143,43 @@ All green.
   orientation, narrowing, rename-safety, and provenance compound -- tiny
   greenfield apps are the LEAST favorable terrain for slopp, and it already
   reaches parity-to-modest-overhead there.
+
+## Eval round 2: MODIFY-AND-EXTEND, seeded ~16-form tasker (@ 507d0e2)
+
+Six requirements (optional-arg change, cross-ns feature, extract, rename,
+test updates) over an unfamiliar seeded codebase; slopp cohort vs
+conventional-files cohort (same seed, same spec). All six runs green;
+acceptance verified.
+
+| model | workflow | true tokens | duration | tool calls |
+|---|---|---|---|---|
+| haiku  | files | 31,475 | 131s | 27 |
+| haiku  | slopp | 41,410 | 363s | 53 |
+| sonnet | files | 45,627 | 250s | 29 |
+| sonnet | slopp | 68,156 | 582s | 60 |
+| opus   | files | 26,374 | 154s | 13 |
+| opus   | slopp | 52,151 | 497s | 37 |
+
+HONEST RESULT: files won across all models at this scale (+32..98% tokens,
+2.3-3.2x wall for slopp). The orientation-advantage prediction failed at
+~60 lines / 3 namespaces: file agents read everything (~600 tok) and BATCHED
+multiple spec items per file write (2-4 writes, 2 test cycles), while slopp
+paid a verified round trip per form write, amplified by red-first-per-function
+habits and by schema-guessing friction (edit_extract :form vs :source,
+edit_group :action vs :op -- wrong keys gave internal errors, not validation
+messages; sonnet burned ~1/3 of its calls there). haiku also ran test_run 12x
+despite per-write verification.
+
+What worked as designed: edit_rename (3 forms, zero manual call-site edits,
+all models), edit_extract + edit_move used successfully, a checkpoint lint
+caught a definition-order mistake (sonnet), restart+history available. The
+losses are latency/economics + schema UX, not correctness -- slopp cohort had
+zero wrong-behavior incidents.
+
+Fixes queued from this round: analysis memo-cache (kondo re-runs dominate
+per-write wall), write-op arg aliases + real validation messages, SKILL
+guidance on batching groups. Deeper open question for the design: per-write
+verification pricing vs batched intents at small scales (files' advantage
+here was BATCHING, which edit_group already offers but agents underused).
+Caveat: files-sonnet used an nREPL (inherited user config) instead of cold
+`clojure -M` per cycle, flattering its wall time somewhat.
