@@ -1,4 +1,4 @@
-(ns slopp2.store
+(ns slopp.store
   "In-memory form store + append-only delta log — the system of record (C2/C3/C4).
 
   A namespace is an ordered sequence of *elements*: each element is either a

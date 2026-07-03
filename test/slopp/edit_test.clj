@@ -1,10 +1,10 @@
-(ns slopp2.edit-test
+(ns slopp.edit-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp2.store :as store]
-            [slopp2.render :as render]
-            [slopp2.repl :as repl]
-            [slopp2.image :as image]
-            [slopp2.edit :as edit]))
+            [slopp.store :as store]
+            [slopp.render :as render]
+            [slopp.repl :as repl]
+            [slopp.image :as image]
+            [slopp.edit :as edit]))
 
 (def src "(ns demo)\n(defn add [x y]\n  (+ x y))\n(def z 1)\n")
 

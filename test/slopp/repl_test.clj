@@ -1,6 +1,6 @@
-(ns slopp2.repl-test
+(ns slopp.repl-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp2.repl :as repl]))
+            [slopp.repl :as repl]))
 
 (deftest owned-repl-eval-and-restart
   (let [h (repl/start!)]

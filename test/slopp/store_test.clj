@@ -1,6 +1,6 @@
-(ns slopp2.store-test
+(ns slopp.store-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp2.store :as store]))
+            [slopp.store :as store]))
 
 (def src "(ns foo)\n\n(defn add [x y]\n  (+ x y))\n\n;; a comment\n(def z 1)\n")
 

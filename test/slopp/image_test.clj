@@ -1,8 +1,8 @@
-(ns slopp2.image-test
+(ns slopp.image-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp2.store :as store]
-            [slopp2.repl :as repl]
-            [slopp2.image :as image]))
+            [slopp.store :as store]
+            [slopp.repl :as repl]
+            [slopp.image :as image]))
 
 (def target
   (str "(ns demo\n"

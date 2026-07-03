@@ -1,6 +1,6 @@
-(ns slopp2.api-test
+(ns slopp.api-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp2.api :as api])
+            [slopp.api :as api])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -33,7 +33,7 @@
           (is (contains? (set (map :op lin)) :replace))
           (is (some #(= "defang" (:prompt %)) lin))))
       (testing "build materializes .clj on demand (C1/C6 explicit build)"
-        (let [dir (str (Files/createTempDirectory "slopp2-build"
+        (let [dir (str (Files/createTempDirectory "slopp-build"
                                                   (make-array FileAttribute 0)))]
           (api/build! sess dir)
           (is (= (api/query-source sess 'demo) (slurp (str dir "/demo.clj"))))))

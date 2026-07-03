@@ -1,4 +1,4 @@
-(ns slopp2.smoke-test
+(ns slopp.smoke-test
   "Toolchain smoke test — confirms deps + test runner work end to end."
   (:require [clojure.test :refer [deftest is]]
             [rewrite-clj.zip :as z]))

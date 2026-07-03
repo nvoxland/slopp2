@@ -1,7 +1,7 @@
-(ns slopp2.render-test
+(ns slopp.render-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp2.store :as store]
-            [slopp2.render :as render]))
+            [slopp.store :as store]
+            [slopp.render :as render]))
 
 (def corpus
   ["(ns foo)\n\n(defn add [x y]\n  (+ x y))\n\n;; a comment\n(def z 1)\n"

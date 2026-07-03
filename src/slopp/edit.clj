@@ -1,15 +1,15 @@
-(ns slopp2.edit
+(ns slopp.edit
   "The edit pipeline (O1 whole-form replace): parse -> dialect-check (D3/D4) ->
   commit delta (D-store) -> [hot-reload into the image (D5) + run affected tests
   (C4)] -> return with `!`-effect warnings (D6). This is the authoring loop where
   every prior decision converges."
   (:require [rewrite-clj.parser :as p]
             [rewrite-clj.node :as n]
-            [slopp2.store :as store]
-            [slopp2.render :as render]
-            [slopp2.index :as index]
-            [slopp2.repl :as repl]
-            [slopp2.image :as image]))
+            [slopp.store :as store]
+            [slopp.render :as render]
+            [slopp.index :as index]
+            [slopp.repl :as repl]
+            [slopp.image :as image]))
 
 (def ^:private banned-heads
   "D4 — user macros are banned."

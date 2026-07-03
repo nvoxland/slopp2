@@ -1,5 +1,5 @@
-(ns slopp2.repl
-  "The owned live image (D5): slopp2 launches and manages a JVM Clojure nREPL as
+(ns slopp.repl
+  "The owned live image (D5): slopp launches and manages a JVM Clojure nREPL as
   a subprocess. `refresh` (hot eval/redefine) is the fast path; `restart!` throws
   the process away for a guaranteed-faithful fresh image — the correctness
   backstop. Phase-1 uses plain restart; the warm-spare optimization is deferred."
@@ -22,7 +22,7 @@
    "-M" "-m" "nrepl.cmdline"])
 
 (defn- temp-dir []
-  (str (Files/createTempDirectory "slopp2-image" (make-array FileAttribute 0))))
+  (str (Files/createTempDirectory "slopp-image" (make-array FileAttribute 0))))
 
 (defn- read-port
   "Block reading the subprocess's merged output until it announces its port."

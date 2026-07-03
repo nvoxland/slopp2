@@ -1,4 +1,4 @@
-(ns slopp2.api
+(ns slopp.api
   "The agent-facing operation surface (the tools an MCP adapter exposes). A
   session is an atom holding the evolving store + the owned image. Everything is
   form-addressed (ns/name), never file+line: the agent *sees* code via
@@ -10,12 +10,12 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [rewrite-clj.node :as n]
-            [slopp2.store :as store]
-            [slopp2.render :as render]
-            [slopp2.index :as index]
-            [slopp2.repl :as repl]
-            [slopp2.image :as image]
-            [slopp2.edit :as edit]))
+            [slopp.store :as store]
+            [slopp.render :as render]
+            [slopp.index :as index]
+            [slopp.repl :as repl]
+            [slopp.image :as image]
+            [slopp.edit :as edit]))
 
 (defn open!
   "Start a session: a fresh owned image + an empty store."

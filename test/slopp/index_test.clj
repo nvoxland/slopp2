@@ -1,6 +1,6 @@
-(ns slopp2.index-test
+(ns slopp.index-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp2.index :as index]))
+            [slopp.index :as index]))
 
 (def src
   (str "(ns demo)\n"

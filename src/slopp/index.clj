@@ -1,4 +1,4 @@
-(ns slopp2.index
+(ns slopp.index
   "Static semantic index over rendered source via clj-kondo (content-fed through
   stdin — no disk, C1/C6): var definitions, references, the call graph, and the
   `!`-effect analysis (D6).
