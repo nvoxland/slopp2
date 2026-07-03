@@ -110,6 +110,16 @@ the change here (same commit).
   forms through the compile gate) + whole-touched-nses verification + ONE
   `:merge` provenance delta. Globally-unique ids (C2's uuid/lamport) remain
   deferred — remap suffices for dir-forks.
+- **P4-m2.1 — Iterated merges are exact via causal delivery (user-probed).**
+  Replayed deltas are re-minted with OUR ids, so without bookkeeping a
+  continuing fork's round-2 work false-conflicted ("both sides edited") —
+  our copy of THEIR round-1 work looked like ours. Now every replayed delta
+  carries `:merged-from <their-delta-id>` and the `:merge` delta records
+  `:applied [their-ids]`: delivered deltas never replay again, and
+  `:merged-from` deltas are excluded from the ours-touched conflict set.
+  Fork → merge → keep forking → merge again is a supported loop; genuine
+  same-form conflicts still fire. (Conflicted deltas are NOT marked
+  delivered — they resurface until resolved or content-converged.)
 
 ## H — host
 

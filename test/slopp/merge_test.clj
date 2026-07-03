@@ -90,3 +90,33 @@
     (is (empty? (:conflicts r)))
     (is (contains? (set (:new-nses r)) 'm.extra))
     (is (re-find #"defn e" (render/render-ns (:store r) 'm.extra)))))
+
+(deftest iterated-fork-merges-stay-exact
+  ;; the fork keeps working after being merged once; later merges must
+  ;; deliver only the NEW work — our copies of THEIR round-1 deltas must not
+  ;; masquerade as "our" edits (false conflicts)
+  (let [b     (base)
+        ;; mainline does its own work — the realistic case (why you forked)
+        main0 (replace! b 'b "(defn b [x] :main-work)")
+        fork1 (replace! b 'a "(defn a [x] :round-1)")
+        m1    (store/merge-logs main0 fork1)
+        main1 (first (store/record-merge (:store m1) "fork" m1))
+        ;; fork continues on the SAME form
+        fork2 (replace! fork1 'a "(defn a [x] :round-2)")
+        m2    (store/merge-logs main1 fork2)]
+    (testing "round 2 lands cleanly — mainline never touched 'a"
+      (is (empty? (:conflicts m2)))
+      (is (= 1 (:merged m2)))
+      (is (re-find #":round-2" (render/render-ns (:store m2) 'm.core))))
+    (testing "a third merge with nothing new is a no-op"
+      (let [main2 (first (store/record-merge (:store m2) "fork" m2))
+            m3    (store/merge-logs main2 fork2)]
+        (is (zero? (:merged m3)))
+        (is (empty? (:conflicts m3)))))
+    (testing "GENUINE same-form conflict still fires on iterated merges"
+      (let [main2  (first (store/record-merge (:store m2) "fork" m2))
+            main2' (replace! main2 'a "(defn a [x] :ours-now)")
+            fork3  (replace! fork2 'a "(defn a [x] :round-3)")
+            m4     (store/merge-logs main2' fork3)]
+        (is (= 1 (count (:conflicts m4))))
+        (is (re-find #":round-3" (:theirs (first (:conflicts m4)))))))))
