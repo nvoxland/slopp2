@@ -144,6 +144,13 @@
   (jdbc/execute! conn ["INSERT INTO meta (k,v) VALUES ('line-id', ?)
                         ON CONFLICT(k) DO UPDATE SET v = excluded.v" line-id]))
 
+(defn deltas-after
+  "The journal suffix past the first `n` deltas (incremental sync)."
+  [conn n]
+  (mapv row->delta
+        (jdbc/execute! conn ["SELECT * FROM deltas ORDER BY seq LIMIT -1 OFFSET ?"
+                             (long n)])))
+
 (defn load-store
   "Reconstruct the full in-memory store from the db, or nil if empty."
   [conn]

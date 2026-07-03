@@ -184,3 +184,16 @@
             (is (empty? (:conflicts r)))
             (is (= [21] (api/query-eval sess "(br.core/f 1)"))))))
       (finally (api/close! sess)))))
+
+(deftest concurrent-branch-creation-races-yield-one-winner
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'br.core seed)
+      (let [results (doall (pmap (fn [_] (api/branch! sess "contested"))
+                                 (range 2)))
+            wins    (filter #(= "contested" (:branch %)) results)
+            errs    (filter :error results)]
+        (is (= 1 (count wins)))
+        (is (= 1 (count errs)))
+        (is (re-find #"already exists" (:error (first errs)))))
+      (finally (api/close! sess)))))

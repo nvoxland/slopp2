@@ -44,3 +44,12 @@
   babashka for `clj-nrepl-eval`) — `mise install` provisions it. Its `[env]`
   sets `SLOPP_CLOJURE=clojure`, so owned images launch the mise-pinned CLI
   via PATH instead of `slopp.repl`'s homebrew-path fallback.
+
+## Paren-repair gotcha (learned twice)
+
+The dev nREPL masks file syntax errors: an UNGUARDED `(require ... :reload)`
+that throws leaves the OLD namespace loaded, and subsequent tests pass
+against stale code. After ANY structural/python edit to a `.clj` file:
+wrap the reload in try/catch and CHECK it returned `:reloaded`, and treat a
+fresh-JVM `clojure -M:test` as the only honest reader. clj-nrepl-eval's
+auto-delimiter-repair applies to eval INPUT only, never to files.

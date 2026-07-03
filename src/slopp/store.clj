@@ -312,6 +312,86 @@
                 note   (assoc :note note))]
     [(update store' :deltas conj delta) delta]))
 
+(defn- id-num [id]
+  (some->> (re-find #"\d+$" (str id)) Long/parseLong))
+
+(defn- bump-next-id [store d]
+  (update store :next-id
+          (fnil max 0)
+          (long (inc (or (id-num (:id d)) 0)))
+          (long (inc (apply max 0 (keep id-num
+                                        (concat (when (:form-id d) [(:form-id d)])
+                                                (:form-ids d))))))))
+
+(defn replay-delta
+  "Apply a FOREIGN delta from the SAME journal (linear history — ids are
+  authoritative, nothing remaps) onto a trailing cached store. Returns the
+  advanced store, or nil when this op needs a full reload (e.g. :ingest —
+  the elements table has the writer's exact trivia; rebuild from there)."
+  [store d]
+  (let [with-d (fn [st] (bump-next-id (update st :deltas conj d) d))]
+    (case (:op d)
+      (:verify :checkpoint :merge :turn-begin :turn-end)
+      (with-d store)
+
+      (:replace :rename :normalize)
+      (with-d
+       (reduce-kv
+        (fn [st fid src]
+          (let [ns-sym (ns-of-form-id st fid)]
+            (if-not ns-sym
+              st                                  ; unknown form: ignore
+              (update-in st [:namespaces ns-sym :elements]
+                         (fn [elems]
+                           (mapv (fn [e]
+                                   (if (= fid (:id e))
+                                     (let [node (p/parse-string src)]
+                                       (assoc e :node node
+                                              :name (form-symbol node)))
+                                     e))
+                                 elems))))))
+        store (:sources d)))
+
+      :add
+      (let [ns-sym (:ns d)
+            fid    (:form-id d)
+            src    (get (:sources d) fid)]
+        (if-not (get-in store [:namespaces ns-sym])
+          nil                                     ; ns unknown → full reload
+          (with-d
+           (update-in store [:namespaces ns-sym :elements]
+                      (fn [elems]
+                        (let [node      (p/parse-string src)
+                              needs-nl? (and (seq elems)
+                                             (not (str/ends-with?
+                                                   (n/string (:node (peek elems)))
+                                                   "\n")))]
+                          (cond-> elems
+                            needs-nl? (conj {:kind :sep :node (n/newlines 1)})
+                            true      (conj {:id fid :kind :form
+                                             :name (form-symbol node)
+                                             :node node}
+                                            {:kind :sep
+                                             :node (n/newlines 1)}))))))))
+
+      :delete
+      (let [ns-sym (:ns d)
+            fid    (:form-id d)]
+        (with-d
+         (update-in store [:namespaces ns-sym :elements]
+                    (fn [elems]
+                      (if-let [idx (first (keep-indexed
+                                           (fn [i e] (when (= fid (:id e)) i))
+                                           elems))]
+                        (let [drop-next? (and (< (inc idx) (count elems))
+                                              (= :sep (:kind (nth elems (inc idx)))))]
+                          (into (subvec elems 0 idx)
+                                (subvec elems (+ idx (if drop-next? 2 1)))))
+                        elems)))))
+
+      ;; :ingest / :move / anything unknown → full reload
+      nil)))
+
 (defn sources-at
   "The {form-id source-text} content view as of delta `at-id` (inclusive;
   nil = before any delta). Reconstructed from the log — powers episode

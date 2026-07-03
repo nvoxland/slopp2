@@ -5,6 +5,9 @@
   trace invalidation)."
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.java.shell]
+            [rewrite-clj.parser]
+            [slopp.store :as store]
+            [slopp.render]
             [slopp.api :as api]))
 
 (deftest two-servers-one-store
@@ -102,3 +105,33 @@
       (finally
         (api/close! s1)
         (clojure.java.shell/sh "rm" "-rf" dir)))))
+
+(deftest incremental-sync-replays-the-suffix-exactly    ; backlog: no full reload
+  (let [b  (store/ingest (store/empty-store) 'ir.core
+                         "(ns ir.core)\n(defn f [x] x)\n(defn g [x] x)\n")
+        ;; the writer's side: a realistic suffix of ops
+        w  (-> b
+               (store/replace-node 'ir.core 'f
+                                   (rewrite-clj.parser/parse-string
+                                    "(defn f [x] (+ x 1))")
+                                   :prompt "edit" :agent "w")
+               first
+               (store/append-form 'ir.core
+                                  (rewrite-clj.parser/parse-string
+                                   "(defn h [x] (f x))")
+                                  :prompt "add" :agent "w")
+               first
+               (store/remove-form 'ir.core 'g :prompt "drop" :agent "w")
+               first)
+        ;; the reader replays the suffix onto its trailing copy of b
+        suffix (drop (count (store/deltas b)) (store/deltas w))
+        r      (reduce store/replay-delta b suffix)]
+    (testing "replay reproduces the writer's store exactly"
+      (is (some? r))
+      (is (= (slopp.render/render-ns w 'ir.core)
+             (slopp.render/render-ns r 'ir.core)))
+      (is (= (:next-id w) (:next-id r)))
+      (is (= (store/deltas w) (store/deltas r))))
+    (testing ":ingest in the suffix signals full-reload fallback"
+      (let [w2 (store/ingest w 'ir.extra "(ns ir.extra)\n")]
+        (is (nil? (store/replay-delta r (last (store/deltas w2)))))))))

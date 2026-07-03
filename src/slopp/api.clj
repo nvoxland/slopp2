@@ -114,17 +114,29 @@
       (identical? (:store old) base))))
 
 (defn- refresh-cache!
-  "Reload the cached store from the journal (the record of truth in a
-  durable session). Advances the cache only — it can never regress it."
+  "Advance the cached store from the journal (the record of truth in a
+  durable session): INCREMENTALLY when every foreign delta in the suffix
+  replays (the common case — no full re-parse), falling back to a full
+  load-store otherwise (:ingest/:move/unknown ops). Advance-only — the
+  cache can never regress."
   [session]
   (when-let [conn (:db @session)]
-    (when-let [fresh (db/load-store conn)]
-      (swap! session
-             (fn [s]
-               (if (> (count (:deltas fresh))
-                      (count (store/deltas (:store s))))
-                 (assoc s :store fresh)
-                 s))))))
+    (let [local  (:store @session)
+          suffix (db/deltas-after conn (count (store/deltas local)))
+          incr   (when (seq suffix)
+                   (reduce (fn [st d]
+                             (if-let [st' (store/replay-delta st d)]
+                               st'
+                               (reduced nil)))
+                           local suffix))
+          fresh  (or incr (when (seq suffix) (db/load-store conn)))]
+      (when fresh
+        (swap! session
+               (fn [s]
+                 (if (> (count (store/deltas fresh))
+                        (count (store/deltas (:store s))))
+                   (assoc s :store fresh)
+                   s)))))))
 
 (defn sync-with-journal!
   "m5b: absorb commits made by OTHER servers sharing this store dir. Cheap
@@ -1592,20 +1604,36 @@
       {:error (str "branch " nm " already exists")}
 
       :else
-      (do (let [line-id (str (java.util.UUID/randomUUID))
-                conn    (when dir
-                          (doto (db/open! (line-dir dir nm))
-                            (snapshot-to-conn! (:store @session))
-                            (db/set-line-id! line-id)))]
-            (swap! session
-                   (fn [s]
-                     (-> s
-                         (update :lines assoc (:branch s)
-                                 {:store (:store s) :conn (:db s)})
-                         (assoc :branch nm :db conn
-                                :store (assoc (:store s) :line-id line-id)
-                                :data-version (some-> conn db/data-version)))))
-            {:branch nm :from branch :id line-id})))))
+      ;; claim the name atomically: in-process via the lines map, and
+      ;; cross-process via mkdir (fails if the dir exists)
+      (let [[old _] (swap-vals! session
+                                (fn [s]
+                                  (if (or (= nm (:branch s))
+                                          (contains? (:lines s) nm))
+                                    s
+                                    (update s :lines assoc nm ::claimed))))]
+        (if (or (= nm (:branch old)) (contains? (:lines old) nm))
+          {:error (str "branch " nm " already exists")}
+          (let [bdir (when dir (io/file (line-dir dir nm)))]
+            (when bdir (.mkdirs (.getParentFile bdir)))
+            (if (and bdir (not (.mkdir bdir)))
+              (do (swap! session update :lines dissoc nm)   ; release the claim
+                  {:error (str "branch " nm " already exists")})
+              (let [line-id (str (java.util.UUID/randomUUID))
+                    conn    (when dir
+                              (doto (db/open! (line-dir dir nm))
+                                (snapshot-to-conn! (:store @session))
+                                (db/set-line-id! line-id)))]
+                (swap! session
+                       (fn [s]
+                         (-> s
+                             (update :lines dissoc nm)      ; claim → active
+                             (update :lines assoc (:branch s)
+                                     {:store (:store s) :conn (:db s)})
+                             (assoc :branch nm :db conn
+                                    :store (assoc (:store s) :line-id line-id)
+                                    :data-version (some-> conn db/data-version)))))
+                {:branch nm :from branch :id line-id})))))))) 
 
 (defn- boot-line-image!
   "A fresh image loaded with `store` (consumes the warm spare when ready).
