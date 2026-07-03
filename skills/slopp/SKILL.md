@@ -48,6 +48,7 @@ Server: `clojure -M -m slopp.mcp` (stdio) from the slopp repo.
 | Reorder forms | `edit_move` (form X to just before form Y) |
 | Extract a helper | `edit_extract` — args `{ns, from, form, name}` where `form` is the exact subform source; params (the free locals) are computed for you, placement and the call-site rewrite are handled, behavior is re-verified |
 | Delete | `edit_delete_form` |
+| Try something risky / parallel workstream | `branch_create {name}` → work normally (verified writes) → `branch_switch {name: "main"}` → `branch_merge {name}`. `query_branches` shows where you are; switching resets test-trace narrowing until the next run |
 | Merge a diverged copy of the project | `merge_from {dir}` — different-form work lands; same-form divergence returns `:conflicts` (ours kept, theirs surfaced; resolve with `edit_replace_form`) |
 
 **Batch related changes.** Verification runs per WRITE — so a feature that

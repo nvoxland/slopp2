@@ -177,6 +177,25 @@
    {:name "help"
     :description "The slopp workflow cheat-sheet: which tool for what, how to read results."
     :inputSchema {:type "object" :properties {}}}
+   {:name "branch_create"
+    :description "Create a branch from the current line's state and switch to it (O(1); the image is already correct)."
+    :inputSchema {:type "object" :properties {:name {:type "string"}}
+                  :required ["name"]}}
+   {:name "branch_switch"
+    :description "Checkout another branch (or main): swaps the store and brings the live image in step. The test trace map resets."
+    :inputSchema {:type "object" :properties {:name {:type "string"}}
+                  :required ["name"]}}
+   {:name "branch_merge"
+    :description "Merge a branch into the CURRENT line (switch to main first to merge down). Different-form work lands; same-form divergence returns :conflicts (current line kept, branch surfaced). The branch survives and can continue."
+    :inputSchema {:type "object" :properties {:name {:type "string"}}
+                  :required ["name"]}}
+   {:name "branch_delete"
+    :description "Delete a branch (never the one you are on)."
+    :inputSchema {:type "object" :properties {:name {:type "string"}}
+                  :required ["name"]}}
+   {:name "query_branches"
+    :description "List every branch with its head delta, and which one is current."
+    :inputSchema {:type "object" :properties {}}}
    {:name "merge_from"
     :description "Merge a diverged COPY of this project (a fork = a copied project dir, edited by its own slopp server) back into this session. Different-form work lands; same-form divergence returns :conflicts (ours kept, theirs surfaced). Absolute dir path."
     :inputSchema {:type "object"
@@ -403,6 +422,11 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
                                                :only (some->> (:only a) (mapv symbol))
                                                :fresh (:fresh a)))
       "help"              (text cheat-sheet)
+      "branch_create"     (text (api/branch! session (:name a)))
+      "branch_switch"     (text (api/branch-switch! session (:name a)))
+      "branch_merge"      (text (api/branch-merge! session (:name a)))
+      "branch_delete"     (text (api/branch-delete! session (:name a)))
+      "query_branches"    (text (api/query-branches session))
       "merge_from"        (text (api/merge! session (:dir a)))
       "restart"           (do (api/restart! session) (text "restarted"))
       "build"             (text (api/build! session (:dir a)

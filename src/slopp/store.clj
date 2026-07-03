@@ -322,12 +322,13 @@
   (MV records the agent resolves by hand), and `:applied` — the ids of THEIR
   deltas now causally delivered here, which is what keeps iterated merges
   exact. Returns [store' delta]."
-  [store from {:keys [merged conflicts new-nses applied]}]
+  [store from {:keys [merged conflicts new-nses applied id-map]}]
   (let [[did store'] (gen-id store "d")
         delta (cond-> {:id did :parent (:id (last (:deltas store)))
                        :op :merge :ns '*session* :from (str from)
                        :merged merged}
                 (seq applied)   (assoc :applied (vec applied))
+                (seq id-map)    (assoc :id-map id-map)
                 (seq conflicts) (assoc :conflicts (mapv #(dissoc % :ours) conflicts))
                 (seq new-nses)  (assoc :new-nses (vec new-nses)))]
     [(update store' :deltas conj delta) delta]))
@@ -355,7 +356,7 @@
   Returns {:store :merged :conflicts :notes :changed-form-ids :new-nses
            :applied :fork-point} — pure; the caller owns image loads +
   verification."
-  [ours theirs]
+  [ours theirs & {:keys [from]}]
   (let [od         (:deltas ours)
         td         (:deltas theirs)
         ;; full-value comparison: both sides allocate the same NEXT id for
@@ -363,14 +364,16 @@
         common     (count (take-while true? (map = od td)))
         fork-point (:id (last (take common od)))
         ours-sfx   (drop common od)
-        ;; causal delivery (iterated merges): skip their deltas we've already
-        ;; applied, and never count replayed copies of THEIR work as OUR edits
-        delivered  (into #{}
-                         (mapcat :applied)
-                         (filter #(= :merge (:op %)) od))
+        ;; causal state from PRIOR merges of THIS source (delta ids collide
+        ;; across different sources, so scope by :from): what's delivered,
+        ;; and how their form ids were remapped into ours
+        prior      (filter #(and (= :merge (:op %)) (= (str from) (:from %)))
+                           od)
+        delivered  (into #{} (mapcat :applied) prior)
+        idmap0     (into {} (mapcat :id-map) prior)
         theirs-sfx (remove #(delivered (:id %)) (drop common td))
         touched    (suffix-touched (remove :merged-from ours-sfx))]
-    (loop [st ours, dds (seq theirs-sfx), idmap {}, merged 0,
+    (loop [st ours, dds (seq theirs-sfx), idmap idmap0, merged 0,
            conflicts [], notes [], changed [], new-nses [], applied []]
       (if-let [d (first dds)]
         (let [ds        (rest dds)
@@ -545,4 +548,4 @@
           (recur st ds idmap merged conflicts notes changed new-nses applied))
         {:store st :merged merged :conflicts conflicts :notes notes
          :changed-form-ids (vec (distinct changed)) :new-nses new-nses
-         :applied applied :fork-point fork-point}))))
+         :applied applied :id-map idmap :fork-point fork-point}))))

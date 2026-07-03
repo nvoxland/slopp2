@@ -45,6 +45,7 @@
          image   (repl/start!)
          session (atom {:store store :image image :db conn
                         :persist-agent (agent nil)
+                        :dir dir :branch "main" :lines {}
                         :warm-spare? (boolean warm-spare?)})]
      (start-spare! session)
      (doseq [ns-sym (store/ns-dependency-order store)]     ; X3: deps first
@@ -60,6 +61,9 @@
     (await pa))                                   ; drain queued persists
   (when-let [^java.sql.Connection conn (:db @session)]
     (.close conn))
+  (doseq [[_ line] (:lines @session)]
+    (when-let [^java.sql.Connection c (:conn line)]
+      (.close c)))
   nil)
 
 (def ^:dynamic *pre-commit-hook*
@@ -1051,18 +1055,79 @@
                        :test     summary
                        :affected (or affected :all)}))))))))))
 
+(defn- merge-into-session!
+  "Shared merge pipeline (m2 forks + m3 branches): replay `theirs` onto the
+  session store (store/merge-logs), hot-load what arrived (new namespaces in
+  dependency order, then changed forms through the compile gate), commit,
+  persist, verify every touched namespace, and record ONE `:merge` delta."
+  [session theirs from-label]
+  (let [t0   (System/nanoTime)
+        base (:store @session)
+        r    (store/merge-logs base theirs :from from-label)]
+    (cond
+      (nil? (:fork-point r))
+      {:error "stores share no history — not a fork/branch of this project"}
+
+      (and (zero? (:merged r)) (empty? (:conflicts r)))
+      {:merged 0 :conflicts [] :note "already converged — nothing to merge"}
+
+      :else
+      (let [st'      (:store r)
+            load-err (or ;; new namespaces first, dependency order
+                      (some (fn [ns-sym]
+                              (when (contains? (set (:new-nses r)) ns-sym)
+                                (image/load-ns! (:image @session) st' ns-sym)))
+                            (store/ns-dependency-order st'))
+                      ;; then every changed form (compile gate, heals)
+                      (:err (hot-load-all! session st'
+                                           (:changed-form-ids r))))]
+        (if load-err
+          (do (fresh-image! session)
+              {:error (str "merge failed to compile: " load-err)})
+          (let [[st'' mdelta] (store/record-merge st' from-label r)]
+            (if-not (try-commit! session base st'')
+              {:conflict {:reason "store changed during merge — retry"}}
+              (let [new-deltas   (drop (count (store/deltas base))
+                                       (store/deltas st''))
+                    touched-nses (vec (distinct
+                                       (concat (keep :ns new-deltas)
+                                               (:new-nses r))))
+                    _            (doseq [d new-deltas]
+                                   (persist-async! session d
+                                                   (filterv #(get-in st'' [:namespaces %])
+                                                            touched-nses)))
+                    edited       (into #{}
+                                       (keep (fn [id]
+                                               (when-let [e (store/form-by-id st'' id)]
+                                                 (symbol (str (store/ns-of-form-id st'' id))
+                                                         (str (or (:name e) (:id e)))))))
+                                       (:changed-form-ids r))
+                    verify-nses  (vec (remove #{'*session*} touched-nses))
+                    summary      (when (seq verify-nses)
+                                   (run-verification! session verify-nses nil
+                                                      :edited edited))]
+                (when summary
+                  (swap! session update :store
+                         store/record-verification verify-nses summary)
+                  (persist-last! session))
+                (with-ms
+                  (cond-> {:merged     (:merged r)
+                           :conflicts  (:conflicts r)
+                           :merge-delta (:id mdelta)}
+                    (seq (:new-nses r)) (assoc :new-nses (:new-nses r))
+                    (seq (:notes r))    (assoc :notes (:notes r))
+                    summary             (assoc :test summary))
+                  t0)))))))))
+
 (defn merge!
   "Phase 4 m2: merge a DIVERGED COPY of this project back into the live
   session. A 'fork' is just a copied project dir edited by its own slopp
   server; `other-dir` is that copy. Their delta-log suffix replays onto our
-  store (store/merge-logs): different-form work lands, identical changes
-  converge, same-form divergence returns `:conflicts` (ours kept, theirs
-  surfaced — resolve by hand with edit_replace_form). Everything that
-  arrives hot-loads and verifies like any write; ONE `:merge` delta records
-  what happened."
+  store: different-form work lands, identical changes converge, same-form
+  divergence returns `:conflicts` (ours kept, theirs surfaced — resolve by
+  hand with edit_replace_form)."
   [session other-dir]
-  (let [t0   (System/nanoTime)
-        f    (io/file (str other-dir))
+  (let [f    (io/file (str other-dir))
         db-f (io/file f ".slopp" "store.db")]
     (cond
       (not (.isAbsolute f))
@@ -1074,63 +1139,167 @@
       :else
       (let [conn   (db/open! (str f))
             theirs (try (db/load-store conn)
-                        (finally (.close ^java.sql.Connection conn)))
-            base   (:store @session)
-            r      (store/merge-logs base theirs)]
-        (cond
-          (nil? (:fork-point r))
-          {:error "stores share no history — this is not a fork of this project"}
+                        (finally (.close ^java.sql.Connection conn)))]
+        (merge-into-session! session theirs (str other-dir))))))
 
-          (and (zero? (:merged r)) (empty? (:conflicts r)))
-          {:merged 0 :conflicts [] :note "already converged — nothing to merge"}
+;; --- Phase 4 m3: branches within one repo -------------------------------
 
-          :else
-          (let [st'      (:store r)
-                load-err (or ;; new namespaces first, dependency order
-                          (some (fn [ns-sym]
-                                  (when (contains? (set (:new-nses r)) ns-sym)
-                                    (image/load-ns! (:image @session) st' ns-sym)))
-                                (store/ns-dependency-order st'))
-                          ;; then every changed form (compile gate, heals)
-                          (:err (hot-load-all! session st'
-                                               (:changed-form-ids r))))]
-            (if load-err
-              (do (fresh-image! session)
-                  {:error (str "merge failed to compile: " load-err)})
-              (let [[st'' mdelta] (store/record-merge st' (str other-dir) r)]
-                (if-not (try-commit! session base st'')
-                  {:conflict {:reason "store changed during merge — retry"}}
-                  (let [new-deltas   (drop (count (store/deltas base))
-                                           (store/deltas st''))
-                        touched-nses (vec (distinct
-                                           (concat (keep :ns new-deltas)
-                                                   (:new-nses r))))
-                        _            (doseq [d new-deltas]
-                                       (persist-async! session d
-                                                       (filterv #(get-in st'' [:namespaces %])
-                                                                touched-nses)))
-                        edited       (into #{}
-                                           (keep (fn [id]
-                                                   (when-let [e (store/form-by-id st'' id)]
-                                                     (symbol (str (store/ns-of-form-id st'' id))
-                                                             (str (or (:name e) (:id e)))))))
-                                           (:changed-form-ids r))
-                        verify-nses  (vec (remove #{'*session*} touched-nses))
-                        summary      (when (seq verify-nses)
-                                       (run-verification! session verify-nses nil
-                                                          :edited edited))]
-                    (when summary
-                      (swap! session update :store
-                             store/record-verification verify-nses summary)
-                      (persist-last! session))
-                    (with-ms
-                      (cond-> {:merged     (:merged r)
-                               :conflicts  (:conflicts r)
-                               :merge-delta (:id mdelta)}
-                        (seq (:new-nses r)) (assoc :new-nses (:new-nses r))
-                        (seq (:notes r))    (assoc :notes (:notes r))
-                        summary             (assoc :test summary))
-                      t0)))))))))))
+(defn- line-dir
+  "Where a branch line persists in a durable session."
+  [dir nm]
+  (str (io/file dir ".slopp" "branches" nm)))
+
+(defn- snapshot-to-conn!
+  "Full-store snapshot into a (fresh) branch db: every delta + all elements."
+  [conn store]
+  (let [ds   (store/deltas store)
+        nses (vec (keys (:namespaces store)))]
+    (doseq [d (butlast ds)] (db/persist! conn store d []))
+    (when-let [d (last ds)] (db/persist! conn store d nses))))
+
+(defn- delete-dir! [^java.io.File f]
+  (when (.exists f)
+    (doseq [^java.io.File c (reverse (file-seq f))] (.delete c))))
+
+(defn- load-line
+  "An inactive line's {:store :conn}: from memory, or lazily from its branch
+  db in a durable session. nil if unknown."
+  [session nm]
+  (let [{:keys [lines dir]} @session]
+    (or (get lines nm)
+        (when (and dir (.exists (io/file (line-dir dir nm) ".slopp" "store.db")))
+          (let [c (db/open! (line-dir dir nm))]
+            {:store (db/load-store c) :conn c})))))
+
+(defn branch!
+  "Phase 4 m3: create branch `nm` from the CURRENT line's state and switch to
+  it — O(1), the store is a value; the image is already correct (identical
+  content). Durable sessions snapshot the line under .slopp/branches/<nm>."
+  [session nm]
+  (let [nm (str nm)
+        {:keys [branch lines dir]} @session]
+    (cond
+      (str/blank? nm)
+      {:error "branch needs a name"}
+
+      (= nm "main")
+      {:error "main is the trunk — branch FROM it"}
+
+      (or (= nm branch)
+          (contains? lines nm)
+          (and dir (.exists (io/file (line-dir dir nm)))))
+      {:error (str "branch " nm " already exists")}
+
+      :else
+      (do (when-let [pa (:persist-agent @session)] (await pa))
+          (let [conn (when dir
+                       (doto (db/open! (line-dir dir nm))
+                         (snapshot-to-conn! (:store @session))))]
+            (swap! session
+                   (fn [s]
+                     (-> s
+                         (update :lines assoc (:branch s)
+                                 {:store (:store s) :conn (:db s)})
+                         (assoc :branch nm :db conn))))
+            {:branch nm :from branch})))))
+
+(defn branch-switch!
+  "Checkout: swap the session to line `nm` and bring the ONE live image in
+  step (only namespaces whose source differs reload; a removed namespace
+  forces a fresh image). The trace map resets — it described the other line."
+  [session nm]
+  (let [nm (str nm)]
+    (if (= nm (:branch @session))
+      {:switched nm :note "already on it"}
+      (if-let [target (load-line session nm)]
+        (do (when-let [pa (:persist-agent @session)] (await pa))
+            (let [old-store (:store @session)
+                  new-store (:store target)
+                  removed   (remove #(get-in new-store [:namespaces %])
+                                    (keys (:namespaces old-store)))
+                  changed   (vec (filter #(not= (render/render-ns old-store %)
+                                                (render/render-ns new-store %))
+                                         (store/ns-dependency-order new-store)))]
+              (swap! session
+                     (fn [s]
+                       (-> s
+                           (update :lines assoc (:branch s)
+                                   {:store (:store s) :conn (:db s)})
+                           (update :lines dissoc nm)
+                           (assoc :branch nm
+                                  :db (:conn target)
+                                  :store new-store
+                                  :test-map {}))))
+              (if (seq removed)
+                (fresh-image! session)
+                (when (some #(image/load-ns! (:image @session) new-store %)
+                            changed)
+                  (fresh-image! session)))          ; any load error → heal fully
+              {:switched nm :reloaded (if (seq removed) :all changed)}))
+        {:error (str "no branch named " nm)}))))
+
+(defn branch-merge!
+  "Merge branch `nm` into the CURRENT line (switch to main first to merge
+  down). Same engine and semantics as fork merges, iterated merges included;
+  the branch survives and can keep going."
+  [session nm]
+  (let [nm (str nm)]
+    (if (= nm (:branch @session))
+      {:error "cannot merge a branch into itself — switch to the target line first"}
+      (if-let [target (load-line session nm)]
+        (let [res (merge-into-session! session (:store target)
+                                       (str "branch:" nm))]
+          ;; lazily-opened conn is only needed for reading here
+          (when (and (:conn target)
+                     (not (contains? (:lines @session) nm)))
+            (.close ^java.sql.Connection (:conn target)))
+          res)
+        {:error (str "no branch named " nm)}))))
+
+(defn branch-delete!
+  "Drop branch `nm` (never the one you are on). Durable sessions also remove
+  its .slopp/branches dir."
+  [session nm]
+  (let [nm (str nm)
+        {:keys [branch lines dir]} @session]
+    (cond
+      (= nm branch)
+      {:error "cannot delete the branch you are on"}
+
+      (not (or (contains? lines nm)
+               (and dir (.exists (io/file (line-dir dir nm))))))
+      {:error (str "no branch named " nm)}
+
+      :else
+      (do (some-> (get-in lines [nm :conn])
+                  ^java.sql.Connection (.close))
+          (swap! session update :lines dissoc nm)
+          (when dir (delete-dir! (io/file (line-dir dir nm))))
+          {:deleted nm}))))
+
+(defn query-branches
+  "Every line in the repo: the current one, in-memory lines, and (durable)
+  on-disk branches not yet loaded this session."
+  [session]
+  (let [{:keys [branch lines dir store]} @session
+        on-disk (when dir
+                  (let [bdir (io/file dir ".slopp" "branches")]
+                    (when (.exists bdir)
+                      (map #(.getName ^java.io.File %)
+                           (filter #(.isDirectory ^java.io.File %)
+                                   (.listFiles bdir))))))
+        info    (fn [nm st]
+                  (cond-> {:name nm}
+                    st (assoc :head   (:id (last (store/deltas st)))
+                              :deltas (count (store/deltas st)))))]
+    {:current  branch
+     :branches (vec (concat
+                     [(info branch store)]
+                     (for [[nm line] (sort-by key lines)]
+                       (info nm (:store line)))
+                     (for [nm (sort (remove (set (conj (keys lines) branch))
+                                            (or on-disk [])))]
+                       {:name nm})))}))
 
 (defn build!
   "C1/C6 explicit build: materialize a runnable project under `dir` —

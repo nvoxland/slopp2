@@ -99,24 +99,66 @@
         ;; mainline does its own work — the realistic case (why you forked)
         main0 (replace! b 'b "(defn b [x] :main-work)")
         fork1 (replace! b 'a "(defn a [x] :round-1)")
-        m1    (store/merge-logs main0 fork1)
+        m1    (store/merge-logs main0 fork1 :from "fork")
         main1 (first (store/record-merge (:store m1) "fork" m1))
         ;; fork continues on the SAME form
         fork2 (replace! fork1 'a "(defn a [x] :round-2)")
-        m2    (store/merge-logs main1 fork2)]
+        m2    (store/merge-logs main1 fork2 :from "fork")]
     (testing "round 2 lands cleanly — mainline never touched 'a"
       (is (empty? (:conflicts m2)))
       (is (= 1 (:merged m2)))
       (is (re-find #":round-2" (render/render-ns (:store m2) 'm.core))))
     (testing "a third merge with nothing new is a no-op"
       (let [main2 (first (store/record-merge (:store m2) "fork" m2))
-            m3    (store/merge-logs main2 fork2)]
+            m3    (store/merge-logs main2 fork2 :from "fork")]
         (is (zero? (:merged m3)))
         (is (empty? (:conflicts m3)))))
     (testing "GENUINE same-form conflict still fires on iterated merges"
       (let [main2  (first (store/record-merge (:store m2) "fork" m2))
             main2' (replace! main2 'a "(defn a [x] :ours-now)")
             fork3  (replace! fork2 'a "(defn a [x] :round-3)")
-            m4     (store/merge-logs main2' fork3)]
+            m4     (store/merge-logs main2' fork3 :from "fork")]
         (is (= 1 (count (:conflicts m4))))
         (is (re-find #":round-3" (:theirs (first (:conflicts m4)))))))))
+
+(deftest cross-merge-id-remapping-persists
+  ;; THE corruption case: the fork ADDS a form (remapped on merge #1), then
+  ;; EDITS it; mainline meanwhile added its own form under the SAME original
+  ;; id. Without a persisted id-map, merge #2 lands the fork's edit on the
+  ;; WRONG form.
+  (let [b     (base)
+        fork1 (-> b
+                  (store/append-form 'm.core (p/parse-string "(defn added [x] :v1)")
+                                     :prompt "fork adds")
+                  first)
+        ;; mainline's own add mints the SAME form id as the fork's add
+        main0 (-> b
+                  (store/append-form 'm.core (p/parse-string "(defn mine [x] :mine)")
+                                     :prompt "main adds")
+                  first)
+        m1    (store/merge-logs main0 fork1 :from "fork")
+        main1 (first (store/record-merge (:store m1) "fork" m1))
+        ;; fork edits ITS added form
+        fork2 (replace! fork1 'added "(defn added [x] :v2)")
+        m2    (store/merge-logs main1 fork2 :from "fork")]
+    (is (empty? (:conflicts m1)))
+    (testing "merge #2 edits the fork's form, never mainline's collided one"
+      (is (empty? (:conflicts m2)))
+      (is (= 1 (:merged m2)))
+      (let [src (render/render-ns (:store m2) 'm.core)]
+        (is (re-find #"added \[x\] :v2" src))
+        (is (re-find #"mine \[x\] :mine" src))))))
+
+(deftest causal-state-is-scoped-per-source
+  ;; two different forks both have a delta "d5"; fork-A's delivery must not
+  ;; mark fork-B's d5 as merged
+  (let [b      (base)
+        fork-a (replace! b 'a "(defn a [x] :from-a)")
+        fork-b (replace! b 'b "(defn b [x] :from-b)")
+        m1     (store/merge-logs b fork-a :from "fork-a")
+        main1  (first (store/record-merge (:store m1) "fork-a" m1))
+        m2     (store/merge-logs main1 fork-b :from "fork-b")]
+    (is (= 1 (:merged m2)))
+    (let [src (render/render-ns (:store m2) 'm.core)]
+      (is (re-find #":from-a" src))
+      (is (re-find #":from-b" src)))))

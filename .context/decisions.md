@@ -121,6 +121,26 @@ the change here (same commit).
   same-form conflicts still fire. (Conflicted deltas are NOT marked
   delivered — they resurface until resolved or content-converged.)
 
+- **P4-m3 — Branches within one repo (user-requested).** A branch is an O(1)
+  snapshot of the store value, sharing the delta-log prefix by construction —
+  so `branch_merge` IS the m2 engine, causal delivery included. The single
+  live image gets CHECKOUT semantics: `branch_switch` swaps the store and
+  reloads only namespaces whose source differs (removed ns → fresh image);
+  the trace map resets across lines. Durable sessions persist each branch as
+  its own mini store-db under `.slopp/branches/<name>/` (full snapshot on
+  create, normal write-through while active, lazy load on switch; survives
+  restart). Merge direction: into the CURRENT line (checkout main to merge
+  down); the branch survives and can continue. Multi-agent note: one active
+  checkout per session — concurrent multi-line work wants forks (or an image
+  pool, deferred).
+- **P4-m3.1 — Cross-merge id-maps persist, scoped per source.** Found by the
+  m3 tests: merge #1 remaps a branch's added form to a fresh id, and without
+  remembering that mapping, merge #2 resolves the branch's follow-up edit
+  against the WRONG form (mainline's same-numbered add) — silent corruption,
+  not just false conflicts. The `:merge` delta now records `:id-map` next to
+  `:applied`, and BOTH are scoped by `:from` (different sources mint
+  colliding delta AND form ids). merge-logs takes `:from`.
+
 ## H — host
 
 - **H1 — slopp itself is Clojure/JVM** (same runtime as image + tooling; no
