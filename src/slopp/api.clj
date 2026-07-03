@@ -62,12 +62,28 @@
       (db/persist! db store (last (store/deltas store))))))
 
 (defn ingest!
-  "Ingest `source` as `ns-sym` and load it into the live image."
+  "Ingest `source` as `ns-sym` and load it into the live image. Returns a tidy
+  map ({:ns :forms}), or {:error msg} on unparseable source (F3/F8)."
   [session ns-sym source]
-  (swap! session update :store store/ingest ns-sym source)
-  (persist-last! session)
-  (image/load-ns! (:image @session) (:store @session) ns-sym)
-  session)
+  (try
+    (swap! session update :store store/ingest ns-sym source)
+    (persist-last! session)
+    (image/load-ns! (:image @session) (:store @session) ns-sym)
+    {:ns ns-sym :forms (count (store/forms (:store @session) ns-sym))}
+    (catch Exception e
+      {:error (str "unparseable source (unbalanced?): " (ex-message e))})))
+
+(defn create-ns!
+  "F4: create a brand-new namespace, optionally with `:requires` (clause
+  strings like \"[clojure.string :as str]\")."
+  [session ns-sym & {:keys [requires]}]
+  (if (get-in (:store @session) [:namespaces ns-sym])
+    {:error (str ns-sym " already exists")}
+    (ingest! session ns-sym
+             (str "(ns " ns-sym
+                  (when (seq requires)
+                    (str "\n  (:require " (str/join "\n            " requires) ")"))
+                  ")\n"))))
 
 ;; --- query.* (read) ---
 
@@ -345,6 +361,18 @@
                             vec)
              :test     summary
              :affected (or (not-empty affected) :all)}))))))
+
+(defn add-require!
+  "F5: add one require clause to `ns-sym`'s ns form — structural edit through
+  the normal replace pipeline (delta, hot-reload, verification)."
+  [session ns-sym require-str & {:keys [prompt]}]
+  (if-let [f (store/form-named (:store @session) ns-sym ns-sym)]
+    (let [r (edit/add-require-source (n/string (:node f)) require-str)]
+      (if (:error r)
+        r
+        (edit-replace! session ns-sym ns-sym (:src r)
+                       :prompt (or prompt (str "add require " require-str)))))
+    {:error (str "no namespace " ns-sym " (create it first)")}))
 
 (defn test-run!
   "Traced, diagnosed run of `ns-sym`'s tests; refreshes the test→form map and

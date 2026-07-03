@@ -18,8 +18,11 @@ by convention it must not redefine code; redefinition belongs to edit ops).
 
 ## Write surface (each = tracked delta(s) + hot-reload + verification + provenance)
 
-- `ingest!` — create/replace a whole namespace from source (currently ALSO the
-  only way to create a namespace — F4 open).
+- `ingest!` — load a whole namespace from source; returns `{:ns :forms}` or
+  `{:error}` (never throws on bad source).
+- `create-ns!` — first-class new-namespace op (optional `:requires` clause
+  strings); `add-require!` — structural, dup-checked require addition through
+  the replace pipeline. Prefer these over hand-ingesting/replacing ns forms.
 - `edit-replace!` — whole-form replace (O1); the common "semantic patch" path.
 - `add-form!` / `delete-form!` — grow/shrink a namespace (delete `ns-unmap`s).
 - `rename!` — coordinated multi-form rename; see `slopp.refactor` notes below.

@@ -5,6 +5,7 @@
   is orchestrated one level up, in slopp.api."
   (:require [rewrite-clj.parser :as p]
             [rewrite-clj.node :as n]
+            [rewrite-clj.zip :as z]
             [slopp.store :as store]
             [slopp.render :as render]
             [slopp.index :as index]
@@ -36,15 +37,42 @@
 
 (defn parse-form
   "Parse `source` as exactly ONE dialect-legal top-level form (the D3/D4 gate
-  every write shares). Returns {:node node} or {:error msg}."
+  every write shares). Returns {:node node} or {:error msg} — including for
+  unparseable/unbalanced source (F3: never throws)."
   [source]
-  (let [forms (filter n/sexpr-able? (n/children (p/parse-string-all source)))]
-    (if (not= 1 (count forms))
-      {:error (str "expected exactly one top-level form, got " (count forms))}
-      (let [node (first forms)]
-        (if-let [err (dialect-check node)]
-          {:error err}
-          {:node node})))))
+  (try
+    (let [forms (filter n/sexpr-able? (n/children (p/parse-string-all source)))]
+      (if (not= 1 (count forms))
+        {:error (str "expected exactly one top-level form, got " (count forms))}
+        (let [node (first forms)]
+          (if-let [err (dialect-check node)]
+            {:error err}
+            {:node node}))))
+    (catch Exception e
+      {:error (str "unparseable source (unbalanced?): " (ex-message e))})))
+
+(defn add-require-source
+  "F5: structurally add one require clause (`require-str`, e.g.
+  \"[clojure.string :as str]\") to an ns form's source. Returns {:src new-src}
+  or {:error msg} (bad clause / already required)."
+  [ns-source require-str]
+  (try
+    (let [req  (n/sexpr (p/parse-string require-str))
+          lib  (if (vector? req) (first req) req)
+          spec (n/sexpr (p/parse-string ns-source))
+          libs (for [clause spec
+                     :when (and (seq? clause) (= :require (first clause)))
+                     r (rest clause)]
+                 (if (vector? r) (first r) r))]
+      (if (some #{lib} libs)
+        {:error (str "already required: " lib)}
+        (let [zloc (z/of-string ns-source)
+              rq   (z/find-value zloc z/next :require)]
+          {:src (if rq
+                  (-> rq z/up (z/append-child req) z/root-string)
+                  (-> zloc (z/append-child (list :require req)) z/root-string))})))
+    (catch Exception e
+      {:error (str "bad require clause: " (ex-message e))})))
 
 (defn ns-warnings
   "D6 `!`-effect violations for `ns-sym`'s current state."

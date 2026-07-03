@@ -18,6 +18,18 @@
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :source {:type "string"}}
                   :required ["ns" "source"]}}
+   {:name "ns_create"
+    :description "Create a brand-new namespace, optionally with require clauses (strings like \"[clojure.string :as str]\")."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"}
+                               :requires {:type "array" :items {:type "string"}}}
+                  :required ["ns"]}}
+   {:name "ns_add_require"
+    :description "Add one require clause (e.g. \"[clojure.string :as str]\") to a namespace's ns form (tracked, hot-reloaded)."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :require {:type "string"}
+                               :prompt {:type "string"}}
+                  :required ["ns" "require"]}}
    {:name "query_source"
     :description "Render a namespace's current source from the store (VFS read)."
     :inputSchema {:type "object" :properties {:ns {:type "string"}} :required ["ns"]}}
@@ -92,7 +104,12 @@
   (let [a   arguments
         sym #(symbol (get a %))]
     (case name
-      "ingest"            (do (api/ingest! session (sym :ns) (:source a)) (text "ok"))
+      "ingest"            (text (api/ingest! session (sym :ns) (:source a)))
+      "ns_create"         (text (api/create-ns! session (sym :ns)
+                                                :requires (:requires a)))
+      "ns_add_require"    (text (-> (api/add-require! session (sym :ns) (:require a)
+                                                      :prompt (:prompt a))
+                                    (select-keys [:error :warnings :test :affected :delta])))
       "query_source"      (text (api/query-source session (sym :ns)))
       "query_symbol"      (text (api/query-symbol session (sym :ns) (sym :name)))
       "query_references"  (text (vec (api/query-references session (sym :ns) (sym :name))))
