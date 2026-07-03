@@ -103,6 +103,21 @@ errors (every sonnet/opus run guessed name/to first) · E2 ✅ SKILL.md teaches
 the two-write red-first TDD shape (fn+test in one group → honest red →
 replace). Full data: `benchmarks/results.md` symmetric-eval sections.
 
+## R — eval round 2 (modify-and-extend, seeded codebase)
+
+**Honest result: files won at ~60-line scale for all models** (+32..98% tok,
+2.3–3.2× wall). Cause ranking: batching (files cover clustered changes in 2–4
+whole-file writes; slopp paid ~10–20 verified round trips), per-write
+verification wall (kondo re-runs now memo-cached ✅), schema guessing (arg
+aliases + validation messages ✅), redundant test_runs (SKILL guidance ✅).
+Correctness/safety all held: rename flawless for every model, checkpoint lint
+caught a real ordering mistake, zero wrong-behavior incidents. **Open
+strategic fork:** chase small-scale economics (stronger batching primitives /
+deferred-verification modes — touches the core loop) vs. accept the premium
+as the price of verified+tracked writes and target scale (next eval: 10+
+namespaces, too big to read whole). Needs a user call before core-loop
+changes. Data: benchmarks/results.md; report: projects/eval2/REPORT.md.
+
 ## B — benchmark/baseline findings
 
 B1 ✅ **terse green responses** (from the Go-baseline comparison): MCP write
