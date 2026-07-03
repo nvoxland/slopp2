@@ -376,7 +376,41 @@
   (substring of prompt/label), `:limit` (default 20). `:collapse true`
   returns EPISODE rows instead of raw deltas — one row per agent-work-unit
   between checkpoints, the readable long-term view."
-  [session & {:keys [ns contains limit collapse] :or {limit 20}}]
+  [session & {:keys [ns contains limit collapse format] :or {limit 20}}]
+  (let [render-text
+        (fn [rows]
+          (clojure.string/join
+           "\n"
+           (mapcat
+            (fn [row]
+              (cond
+                (:turn row)
+                (let [t (:turn row)]
+                  (cons (str "TURN [" (:agent t) (when (:user t)
+                                                   (str " for " (:user t)))
+                             "] " (or (some-> (:intent t)
+                                              (clojure.string/split-lines)
+                                              first)
+                                      "(no intent)")
+                             (when (:open? t) "  (open)"))
+                        (map (fn [e]
+                               (str "  episode " (:agent e)
+                                    (when (:label e) (str " \"" (:label e) "\""))
+                                    ": " (:ops e) " ops, " (:forms e) " forms"
+                                    (when (:open? e) " (open)")))
+                             (:episodes t))))
+                (:episode row)
+                (let [e (:episode row)]
+                  [(str "episode " (or (:agent e) "-")
+                        (when (:label e) (str " \"" (:label e) "\""))
+                        ": " (:ops e) " ops, " (:forms e) " forms"
+                        (when (:open? e) " (open)"))])
+                :else
+                [(str (:id row) " " (:op row)
+                      (when (:agent row) (str " [" (:agent row) "]"))
+                      (when (:prompt row) (str " — " (:prompt row))))]))
+            rows)))
+        rows
   (if collapse
     (let [ds       (store/deltas (:store @session))
           relevant (filter #(or (contains? #{:ingest :add :replace :delete
@@ -504,7 +538,10 @@
                             [(:prompt %) (:label %)])))
          (take limit)
          (mapv #(select-keys % [:id :op :ns :prompt :label :group :agent
-                                :form-id :form-ids :old :new :before])))))
+                                :form-id :form-ids :old :new :before]))))]
+    (if (= "text" (some-> format name))
+      (render-text rows)
+      rows)))
 
 (defn query-project
   "The WHOLE store's shape in one call: every namespace with its outline
@@ -610,12 +647,24 @@
   per-form diffs (:was/:now), the step list, and the verification arc. The
   'what have I done since my last stable spot' view. Parallel agents with
   distinct :agent labels each see only their own work."
-  [session & {:keys [agent]}]
+  [session & {:keys [agent from to]}]
   (let [st       (:store @session)
-        boundary (episode-boundary st agent)
-        span     (episode-span st agent)
+        boundary (if from
+                   ;; historical span: `from`/`to` are delta ids (e.g. from a
+                   ;; collapsed history row); boundary = just BEFORE `from`
+                   (:id (last (take-while #(not= from (:id %))
+                                          (store/deltas st))))
+                   (episode-boundary st agent))
+        span     (if from
+                   (let [ds (drop-while #(not= from (:id %))
+                                        (store/deltas st))]
+                     (if to
+                       (let [[pre [t & _]] (split-with #(not= to (:id %)) ds)]
+                         (concat pre (when t [t])))
+                       ds))
+                   (episode-span st agent))
         mine     (filter #(and (contains? content-ops (:op %))
-                               (= agent (:agent %)))
+                               (or (nil? agent) (= agent (:agent %))))
                          span)
         fids     (distinct (mapcat delta-fids mine))
         was      (store/sources-at st boundary)
@@ -624,9 +673,12 @@
                                (when (= :delete (:op d))
                                  [(:form-id d) [(:ns d) (:name d)]])))
                        mine)
+        at-end   (when to (store/sources-at st to))
         forms    (vec (keep (fn [fid]
                               (let [e   (store/form-by-id st fid)
-                                    now (some-> e :node n/string)
+                                    now (if to
+                                          (get at-end fid)
+                                          (some-> e :node n/string))
                                     old (get was fid)]
                                 (when (not= old now)
                                   (let [[dns dnm] (get del-info fid)

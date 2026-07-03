@@ -236,3 +236,37 @@
       (finally
         (api/close! sess)
         (clojure.java.shell/sh "rm" "-rf" dir)))))
+
+(deftest history-drill-down-and-text-rendering          ; granularity gaps
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'ep.core seed)
+      (api/turn-begin! sess :agent "alice" :intent "make f add ten")
+      (api/edit-replace! sess 'ep.core 'f-t "(deftest f-t (is (= 11 (f 1))))"
+                         :prompt "red first" :agent "alice")
+      (api/edit-replace! sess 'ep.core 'f "(defn f [x] (+ x 10))"
+                         :prompt "green" :agent "alice")
+      (api/checkpoint! sess :label "plus-ten" :agent "alice")
+      (api/turn-end! sess :agent "alice")
+      ;; more work after, so the span is genuinely historical
+      (api/edit-replace! sess 'ep.core 'g "(defn g [x] :later)"
+                         :prompt "later work" :agent "bob")
+      (testing "a PAST episode inspects like the current one: plug the
+                from/to ids from its collapsed row into query_changes"
+        (let [row  (first (keep :turn (api/query-history sess :collapse true)))
+              ep   (first (:episodes row))
+              c    (api/query-changes sess :agent "alice"
+                                      :from (:from ep) :to (:to ep))]
+          (is (= #{'ep.core/f 'ep.core/f-t}
+                 (set (map :form (:forms c)))))
+          (is (re-find #"inc x" (:was (first (filter #(= 'ep.core/f (:form %))
+                                                     (:forms c))))))
+          (is (= [1 0] (mapv :fail (:verification-arc c))))
+          (testing "bob's later work is NOT in the span"
+            (is (not-any? #(= 'ep.core/g (:form %)) (:forms c))))))
+      (testing "format text renders a human story"
+        (let [txt (api/query-history sess :collapse true :format "text")]
+          (is (string? txt))
+          (is (re-find #"make f add ten" txt))
+          (is (re-find #"plus-ten" txt))))
+      (finally (api/close! sess)))))

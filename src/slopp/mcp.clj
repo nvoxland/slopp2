@@ -83,7 +83,8 @@
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :contains {:type "string"}
                                :limit {:type "integer"}
-                               :collapse {:type "boolean"}}}}
+                               :collapse {:type "boolean"}
+                               :format {:type "string" :enum ["edn" "text"]}}}}
    {:name "query_form_history"
     :description "Every content version of a form, oldest first, with the prompt that produced it."
     :inputSchema {:type "object"
@@ -178,8 +179,10 @@
                   :properties {:agent {:type "string"} :note {:type "string"}}
                   :required ["agent"]}}
    {:name "query_changes"
-    :description "YOUR episode: everything you have done since your last checkpoint — net per-form diffs (:was/:now), the step list, and the red/green verification arc. Pass your :agent label (essential when sub-agents work in parallel)."
-    :inputSchema {:type "object" :properties {:agent {:type "string"}}}}
+    :description "Net per-form diffs (:was/:now), steps, and the red/green verification arc — for YOUR open episode (pass :agent), or for ANY PAST span: pass :from/:to delta ids straight from a collapsed history row (drill-down)."
+    :inputSchema {:type "object"
+                  :properties {:agent {:type "string"}
+                               :from {:type "string"} :to {:type "string"}}}}
    {:name "episode_revert"
     :description "Scrap your episode: roll every form you changed since your last checkpoint back to that stable spot, as ONE atomic verified group. Forms other agents also touched are skipped and reported in :skipped-shared, never stomped."
     :inputSchema {:type "object"
@@ -373,7 +376,8 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
                                                   :user (:user a)))
       "turn_end"          (text (api/turn-end! session :agent (:agent a)
                                                :note (:note a)))
-      "query_changes"     (text (api/query-changes session :agent (:agent a)))
+      "query_changes"     (text (api/query-changes session :agent (:agent a)
+                                                    :from (:from a) :to (:to a)))
       "episode_revert"    (text (-> (api/revert-episode! session
                                                          :agent (:agent a)
                                                          :prompt (:prompt a))
@@ -385,6 +389,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
                                                    :ns (some-> (:ns a) symbol)
                                                    :contains (:contains a)
                                                    :collapse (:collapse a)
+                                                   :format (:format a)
                                                    :limit (or (:limit a) 20)))
       "query_form_history" (text (api/query-form-history session (sym :ns) (sym :name)))
       "query_eval"        (text (api/query-eval session (:code a)))
