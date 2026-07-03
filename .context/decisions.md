@@ -196,6 +196,23 @@ the change here (same commit).
   the new fork's work. Same-branch multi-agent remains the default working
   mode; branches are opt-in isolation.
 
+- **P4-m6 — Episodes: automatic per-agent work units between checkpoints
+  (user-designed).** The "micro branch" need is met WITHOUT branches: an
+  episode is DERIVED from the journal (no tagging) — an agent's deltas since
+  its last checkpoint. Boundary rule: your own last checkpoint; an agent
+  that never checkpointed inherits the last stable spot BEFORE its first
+  activity (so pre-existing history is never "contested"). `query_changes`
+  = net per-form :was/:now diffs + steps + red→green verification arc;
+  `checkpoint {agent}` closes and normalizes ONLY that agent's episode
+  (parallel sub-agents don't interfere); `episode_revert` rolls the episode
+  back as ONE atomic verified group, SKIPPING forms other agents also
+  touched (:skipped-shared — never stomped); `query_history {collapse:true}`
+  reads history at episode grain. Chosen over literal auto-branches because:
+  zero per-write cost, append-only provenance preserved (collapse is a VIEW,
+  not a squash), and shared-line continuous sync semantics unchanged.
+  Discipline: parallel sub-agents MUST carry distinct :agent labels (SKILL).
+  Deferred: isolation-until-stable as an opt-in built on real branches.
+
 ## H — host
 
 - **H1 — slopp itself is Clojure/JVM** (same runtime as image + tooling; no

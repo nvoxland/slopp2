@@ -27,7 +27,15 @@ Server: `clojure -M -m slopp.mcp` (stdio) from the slopp repo.
    re-runs exactly the tests that exercise the touched form(s). You do NOT
    need to call `test_run` after edits — the result is already in the
    response.
-4. **Checkpoint at unit boundaries.** When a piece of work is done, call
+4. **Your EPISODE is tracked for you.** Everything you do between your
+   checkpoints is one automatic work unit: `query_changes {agent}` shows the
+   net per-form diff, steps, and red→green arc since your last stable spot;
+   `episode_revert {agent}` scraps the whole attempt back to it (forms other
+   agents touched are skipped, never stomped). Pass a DISTINCT `agent` label
+   on every call — essential when sub-agents work in parallel, or your
+   episodes braid together. `query_history {collapse: true}` reads the
+   long-term history at episode grain.
+5. **Checkpoint at unit boundaries.** When a piece of work is done, call
    `checkpoint {label}` — it tidies the forms you touched (deterministic,
    behavior-preserving rewrites, re-verified) and marks the boundary in
    history.

@@ -282,15 +282,30 @@
     [(update store' :deltas conj delta) delta]))
 
 (defn record-checkpoint
-  "Append a `:checkpoint` boundary delta — a unit-of-work marker in the
-  history. Returns [store' delta-id]."
-  [store label]
+  "Append a `:checkpoint` boundary delta — a unit-of-work marker (and the
+  close of `agent`'s episode). Returns [store' delta-id]."
+  [store label & {:keys [agent]}]
   (let [[did store'] (gen-id store "d")]
     [(update store' :deltas conj
              (cond-> {:id did :parent (:id (last (:deltas store)))
                       :op :checkpoint :ns '*session*}
-               label (assoc :label label)))
+               label (assoc :label label)
+               agent (assoc :agent agent)))
      did]))
+
+(defn sources-at
+  "The {form-id source-text} content view as of delta `at-id` (inclusive;
+  nil = before any delta). Reconstructed from the log — powers episode
+  diffs."
+  [store at-id]
+  (if (nil? at-id)
+    {}
+    (reduce (fn [acc d]
+              (let [acc (merge acc (:sources d))
+                    acc (if (= :delete (:op d)) (dissoc acc (:form-id d)) acc)]
+                (if (= at-id (:id d)) (reduced acc) acc)))
+            {}
+            (:deltas store))))
 
 (defn record-verification
   "Append a `:verify` delta recording a test-run result against `ns-sym` — 'what

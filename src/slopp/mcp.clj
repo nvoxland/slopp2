@@ -79,10 +79,11 @@
                   :properties {:ns {:type "string"} :name {:type "string"}}
                   :required ["ns" "name"]}}
    {:name "query_history"
-    :description "The change history as a story, newest first (op, prompt, label). Filters: ns, contains (prompt/label substring), limit."
+    :description "The change history, newest first. Default: raw deltas (op, prompt, label; filters ns/contains/limit). Pass collapse=true for EPISODE rows — one per agent-work-unit between checkpoints, the readable long-term view."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :contains {:type "string"}
-                               :limit {:type "integer"}}}}
+                               :limit {:type "integer"}
+                               :collapse {:type "boolean"}}}}
    {:name "query_form_history"
     :description "Every content version of a form, oldest first, with the prompt that produced it."
     :inputSchema {:type "object"
@@ -165,9 +166,17 @@
                                :form {:type "string"} :name {:type "string"}
                                :prompt {:type "string"} :agent {:type "string"}}
                   :required ["ns" "from" "form" "name"]}}
+   {:name "query_changes"
+    :description "YOUR episode: everything you have done since your last checkpoint — net per-form diffs (:was/:now), the step list, and the red/green verification arc. Pass your :agent label (essential when sub-agents work in parallel)."
+    :inputSchema {:type "object" :properties {:agent {:type "string"}}}}
+   {:name "episode_revert"
+    :description "Scrap your episode: roll every form you changed since your last checkpoint back to that stable spot, as ONE atomic verified group. Forms other agents also touched are skipped and reported in :skipped-shared, never stomped."
+    :inputSchema {:type "object"
+                  :properties {:agent {:type "string"} :prompt {:type "string"}}}}
    {:name "checkpoint"
-    :description "Mark a unit of work done: deterministically normalize the forms changed since the last checkpoint (tracked :normalize delta, re-verified), and record a boundary in the history."
-    :inputSchema {:type "object" :properties {:label {:type "string"}}}}
+    :description "Mark a unit of work done and CLOSE your episode: deterministically normalize the forms YOU changed since your last checkpoint (tracked :normalize delta, re-verified), record a labeled boundary. Pass your :agent label so parallel agents' checkpoints stay independent."
+    :inputSchema {:type "object" :properties {:label {:type "string"}
+                                              :agent {:type "string"}}}}
    {:name "test_run"
     :description "Run tests in the live image and record the result. No :ns = EVERY namespace's tests in one call (the full-project sweep). :only restricts to named tests; :fresh true restarts first for a guaranteed-faithful run."
     :inputSchema {:type "object"
@@ -330,9 +339,18 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
       "query_symbol"      (text (api/query-symbol session (sym :ns) (sym :name)))
       "query_references"  (text (vec (api/query-references session (sym :ns) (sym :name))))
       "query_lineage"     (text (vec (api/query-lineage session (sym :ns) (sym :name))))
+      "query_changes"     (text (api/query-changes session :agent (:agent a)))
+      "episode_revert"    (text (-> (api/revert-episode! session
+                                                         :agent (:agent a)
+                                                         :prompt (:prompt a))
+                                    (select-keys [:error :conflict :reverted
+                                                  :skipped-shared :note :test
+                                                  :group :affected])
+                                    (summarize (:verbose a))))
       "query_history"     (text (api/query-history session
                                                    :ns (some-> (:ns a) symbol)
                                                    :contains (:contains a)
+                                                   :collapse (:collapse a)
                                                    :limit (or (:limit a) 20)))
       "query_form_history" (text (api/query-form-history session (sym :ns) (sym :name)))
       "query_eval"        (text (api/query-eval session (:code a)))
@@ -417,7 +435,8 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
                                                     :prompt (:prompt a))
                                       (select-keys [:error :extracted :group :test :affected])
                                       (summarize (:verbose a)))))
-      "checkpoint"        (text (api/checkpoint! session :label (:label a)))
+      "checkpoint"         (text (api/checkpoint! session :label (:label a)
+                                                  :agent (:agent a)))
       "test_run"          (text (api/test-run! session
                                                (when (:ns a) (sym :ns))
                                                :only (some->> (:only a) (mapv symbol))

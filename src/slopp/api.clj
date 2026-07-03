@@ -26,7 +26,9 @@
             [slopp.db :as db]))
 
 (declare run-verification! forms-changed-since query-outline
-         hot-load-all! fresh-image! reap-idle-images!)
+         hot-load-all! fresh-image! reap-idle-images!
+         content-ops delta-fids episode-boundary episode-span
+         query-changes edit-group!)
 
 (defn- start-spare!
   "Kick off a background-warming spare image (D5 warm spare) if enabled."
@@ -271,21 +273,21 @@
 
           :else
           (do
-              (repl/eval! (:image @session)
-                          (format "(dosync (commute (deref #'clojure.core/*loaded-libs*) conj '%s))"
-                                  ns-sym))
-              (let [edited  (into #{}
-                                  (keep (fn [e]
-                                          (when (:name e)
-                                            (symbol (str ns-sym) (str (:name e))))))
-                                  (store/forms candidate ns-sym))
-                    summary (run-verification! session ns-sym nil :edited edited)]
-                (commit-appended! session
-                                  #(store/record-verification % ns-sym summary)
-                                  [])
-                {:ns ns-sym
-                 :forms (count (store/forms candidate ns-sym))
-                 :test summary}))))
+            (repl/eval! (:image @session)
+                        (format "(dosync (commute (deref #'clojure.core/*loaded-libs*) conj '%s))"
+                                ns-sym))
+            (let [edited  (into #{}
+                                (keep (fn [e]
+                                        (when (:name e)
+                                          (symbol (str ns-sym) (str (:name e))))))
+                                (store/forms candidate ns-sym))
+                  summary (run-verification! session ns-sym nil :edited edited)]
+              (commit-appended! session
+                                #(store/record-verification % ns-sym summary)
+                                [])
+              {:ns ns-sym
+               :forms (count (store/forms candidate ns-sym))
+               :test summary}))))
       (catch Exception e
         {:error (str "unparseable source (unbalanced?): " (ex-message e))}))))
 
@@ -359,17 +361,64 @@
 
 (defn query-history
   "The delta log as a story, newest first. Filters: `:ns`, `:contains`
-  (substring of prompt/label), `:limit` (default 20)."
-  [session & {:keys [ns contains limit] :or {limit 20}}]
-  (->> (store/deltas (:store @session))
-       reverse
-       (filter #(or (nil? ns) (= ns (:ns %))))
-       (filter #(or (nil? contains)
-                    (some (fn [s] (and s (clojure.string/includes? (str s) contains)))
-                          [(:prompt %) (:label %)])))
-       (take limit)
-       (mapv #(select-keys % [:id :op :ns :prompt :label :group :agent
-                              :form-id :form-ids :old :new :before]))))
+  (substring of prompt/label), `:limit` (default 20). `:collapse true`
+  returns EPISODE rows instead of raw deltas — one row per agent-work-unit
+  between checkpoints, the readable long-term view."
+  [session & {:keys [ns contains limit collapse] :or {limit 20}}]
+  (if collapse
+    (let [ds       (store/deltas (:store @session))
+          relevant (filter #(or (contains? #{:ingest :add :replace :delete
+                                             :rename :normalize :move :merge}
+                                           (:op %))
+                                (= :checkpoint (:op %)))
+                           ds)
+          pos      (into {} (map-indexed (fn [i d] [(:id d) i])) ds)
+          rows     (mapcat
+                    (fn [[agent ads]]
+                      (loop [ads ads, cur [], out []]
+                        (if-let [d (first ads)]
+                          (if (= :checkpoint (:op d))
+                            (recur (rest ads) []
+                                   (if (seq cur)
+                                     (conj out {:episode
+                                                (cond-> {:agent agent
+                                                         :label (:label d)
+                                                         :from  (:id (first cur))
+                                                         :to    (:id d)
+                                                         :ops   (count cur)
+                                                         :forms (count (distinct (mapcat delta-fids cur)))}
+                                                  (nil? agent) (dissoc :agent))})
+                                     out))
+                            (recur (rest ads) (conj cur d) out))
+                          (if (seq cur)
+                            (conj out {:episode
+                                       (cond-> {:agent agent
+                                                :open? true
+                                                :from  (:id (first cur))
+                                                :ops   (count cur)
+                                                :forms (count (distinct (mapcat delta-fids cur)))}
+                                         (nil? agent) (dissoc :agent))})
+                            out))))
+                    (group-by :agent relevant))]
+      (->> rows
+           (sort-by #(- (get pos (or (get-in % [:episode :to])
+                                     (get-in % [:episode :from])))))
+           (filter #(or (nil? contains)
+                        (clojure.string/includes?
+                         (str (get-in % [:episode :label]) " "
+                              (get-in % [:episode :agent]))
+                         contains)))
+           (take limit)
+           vec))
+    (->> (store/deltas (:store @session))
+         reverse
+         (filter #(or (nil? ns) (= ns (:ns %))))
+         (filter #(or (nil? contains)
+                      (some (fn [s] (and s (clojure.string/includes? (str s) contains)))
+                            [(:prompt %) (:label %)])))
+         (take limit)
+         (mapv #(select-keys % [:id :op :ns :prompt :label :group :agent
+                                :form-id :form-ids :old :new :before])))))
 
 (defn query-project
   "The WHOLE store's shape in one call: every namespace with its outline
@@ -397,6 +446,89 @@
            vec))
     (catch Exception ex
       {:error (str "bad pattern: " (ex-message ex))})))
+
+(def ^:private content-ops
+  #{:ingest :add :replace :delete :rename :normalize :move :merge})
+
+(defn- delta-fids [d]
+  (concat (when (:form-id d) [(:form-id d)]) (:form-ids d)))
+
+(defn- episode-boundary
+  "Where `agent-label`'s episode begins: its own last :checkpoint — or, for
+  an agent that has never checkpointed, the last stable spot (ANY agent's
+  checkpoint) before its first activity, so pre-existing history is never
+  mistaken for contested work. nil = log start."
+  [store agent-label]
+  (let [ds  (store/deltas store)
+        own (last (filter #(and (= :checkpoint (:op %))
+                                (= agent-label (:agent %)))
+                          ds))]
+    (:id (or own
+             (let [ckpts     (filter #(= :checkpoint (:op %)) ds)
+                   first-own (first (filter #(and (contains? content-ops (:op %))
+                                                  (= agent-label (:agent %)))
+                                            ds))]
+               (if first-own
+                 (let [pos  (into {} (map-indexed (fn [i d] [(:id d) i])) ds)
+                       fpos (get pos (:id first-own))]
+                   (last (filter #(< (get pos (:id %)) fpos) ckpts)))
+                 (last ckpts)))))))
+
+(defn- episode-span
+  "Deltas after `agent`'s episode boundary (all agents' — callers filter)."
+  [store agent]
+  (let [ds (store/deltas store)]
+    (if-let [b (episode-boundary store agent)]
+      (rest (drop-while #(not= b (:id %)) ds))
+      ds)))
+
+(defn query-changes
+  "The agent's EPISODE — everything since `:agent`'s last checkpoint: net
+  per-form diffs (:was/:now), the step list, and the verification arc. The
+  'what have I done since my last stable spot' view. Parallel agents with
+  distinct :agent labels each see only their own work."
+  [session & {:keys [agent]}]
+  (let [st       (:store @session)
+        boundary (episode-boundary st agent)
+        span     (episode-span st agent)
+        mine     (filter #(and (contains? content-ops (:op %))
+                               (= agent (:agent %)))
+                         span)
+        fids     (distinct (mapcat delta-fids mine))
+        was      (store/sources-at st boundary)
+        del-info (into {}
+                       (keep (fn [d]
+                               (when (= :delete (:op d))
+                                 [(:form-id d) [(:ns d) (:name d)]])))
+                       mine)
+        forms    (vec (keep (fn [fid]
+                              (let [e   (store/form-by-id st fid)
+                                    now (some-> e :node n/string)
+                                    old (get was fid)]
+                                (when (not= old now)
+                                  (let [[dns dnm] (get del-info fid)
+                                        qform (if e
+                                                (symbol (str (store/ns-of-form-id st fid))
+                                                        (str (or (:name e) fid)))
+                                                (symbol (str dns) (str (or dnm fid))))]
+                                    (cond-> {:form    qform
+                                             :form-id fid
+                                             :status  (cond (nil? old) :added
+                                                            (nil? now) :deleted
+                                                            :else      :modified)}
+                                      old (assoc :was old)
+                                      now (assoc :now now))))))
+                            fids))
+        arc      (vec (for [d span
+                            :when (= :verify (:op d))
+                            :let [r (:result d)]]
+                        {:delta (:id d)
+                         :fail  (+ (:fail r 0) (:error r 0))}))]
+    {:agent agent
+     :since (or boundary :log-start)
+     :steps (mapv #(select-keys % [:id :op :ns :prompt]) mine)
+     :forms forms
+     :verification-arc arc}))
 
 (defn query-eval
   "Observe-only eval against the live image (the oracle): call anything —
@@ -939,9 +1071,14 @@
   rewrites), commit the rewrites as ONE `:normalize` group delta, hot-reload +
   re-verify them, then record a labeled `:checkpoint` boundary delta.
   Returns {:checkpoint id :normalized n :rewrites [{:form :applied}] :test s}."
-  [session & {:keys [label]}]
+  [session & {:keys [label agent]}]
   (let [st       (:store @session)
-        changed  (forms-changed-since st (:checkpoint @session))
+        changed  (->> (episode-span st agent)
+                      (filter #(and (contains? content-ops (:op %))
+                                    (= agent (:agent %))))
+                      (mapcat delta-fids)
+                      distinct
+                      (filter #(store/ns-of-form-id st %)))
         rewrites (vec (for [fid changed
                             :let [e (store/form-by-id st fid)
                                   {:keys [node applied]} (normalize/normalize-form (:node e))]
@@ -956,7 +1093,8 @@
           (let [changeset   (into {} (map (juxt :form-id :node)) rewrites)
                 main-ns     (store/ns-of-form-id st (:form-id (first rewrites)))
                 [st' delta] (store/apply-changeset st :normalize main-ns changeset
-                                                   :prompt (or label "checkpoint normalization"))
+                                                   :prompt (or label "checkpoint normalization")
+                                                   :agent agent)
                 touched     (distinct (map #(store/ns-of-form-id st' %) (keys changeset)))]
             (when-let [err (:err (hot-load-all! session st' (keys changeset)))]
               (throw (ex-info (str "normalization failed to compile: " err) {})))
@@ -986,7 +1124,8 @@
         cid (let [v (volatile! nil)]
               (commit-appended! session
                                 (fn [base]
-                                  (let [[st2 c] (store/record-checkpoint base label)]
+                                  (let [[st2 c] (store/record-checkpoint base label
+                                                                         :agent agent)]
                                     (vreset! v c)
                                     st2))
                                 [])
@@ -1038,6 +1177,53 @@
                          :prompt (or prompt
                                      (str "revert to " (:delta target)))
                          :agent agent))))))
+
+(defn revert-episode!
+  "Scrap the agent's episode: roll every form it changed since its last
+  checkpoint back to the boundary state — as ONE atomic verified group
+  (honest provenance, not history erasure). Forms that OTHER agents also
+  touched since the boundary are SKIPPED and reported in :skipped-shared,
+  never stomped."
+  [session & {:keys [agent prompt]}]
+  (let [changes  (query-changes session :agent agent)
+        others   (into #{}
+                       (mapcat delta-fids)
+                       (filter #(and (contains? content-ops (:op %))
+                                     (not= agent (:agent %)))
+                               (episode-span (:store @session) agent)))
+        {shared true mine false} (group-by #(contains? others (:form-id %))
+                                           (:forms changes))
+        steps    (vec (keep (fn [{:keys [form status was]}]
+                              (when (namespace form)   ; anonymous forms: skip
+                                (let [ns-sym (symbol (namespace form))
+                                      nm     (symbol (name form))]
+                                  (case status
+                                    :modified {:action :replace :ns ns-sym
+                                               :name nm :source was}
+                                    :added    {:action :delete :ns ns-sym
+                                               :name nm}
+                                    :deleted  {:action :add :ns ns-sym
+                                               :source was}))))
+                            mine))]
+    (cond
+      (empty? (:forms changes))
+      {:reverted 0 :note "episode is empty — already at the last checkpoint"}
+
+      (empty? steps)
+      {:reverted 0 :skipped-shared (mapv :form shared)
+       :note "every changed form is shared with other agents"}
+
+      :else
+      (let [r (edit-group! session steps
+                           :prompt (or prompt
+                                       (str "revert episode"
+                                            (when agent (str " of " agent))))
+                           :agent agent)]
+        (if (:error r)
+          r
+          (assoc r
+                 :reverted (count steps)
+                 :skipped-shared (mapv :form shared)))))))
 
 (defn- rename-in-trace
   "Carry the observed test→form map across a rename (old qsym → new qsym)."
