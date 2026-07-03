@@ -59,6 +59,16 @@ never touched because kondo never reports them as var usages.
 **Limitation:** symbols inside `:refer` vectors aren't var-usages → not
 rewritten.
 
+## Transports
+
+Two transports share the SAME dispatch (`mcp/handle`):
+- **MCP stdio** (`clojure -M -m slopp.mcp [dir]`) — Claude Code (`.mcp.json`
+  in-repo) and Codex (`config.toml` recipe in README). Optional dir = durable
+  session.
+- **HTTP** (`clojure -M -m slopp.http <port> [dir]`, or
+  `http/start-server!` programmatically) — localhost-only JSON for
+  curl/scripting/evals; `/metrics` returns per-call payload sizes.
+
 ## MCP transport (`slopp.mcp`)
 
 - Minimal JSON-RPC 2.0 over newline-delimited stdio; pure `handle` dispatch
