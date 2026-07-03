@@ -24,10 +24,19 @@ The oracle must never return a false verdict. Everything here serves that.
    selection**: edit form F → run only tests whose set contains F (or F
    itself if F is a test). No trace info → conservative full-ns run
    (`:affected :all`).
-3. **Restart-as-diagnostic (`diagnosed-run!`).** Red on the current image →
-   swap to a fresh image (reloaded from the store, faithful by construction)
-   and re-run before believing it. red→green ⇒ `:staleness-detected true`
-   (healed, no false verdict); red→red ⇒ `:fresh-confirmed true`.
+3. **Smart red diagnosis (`diagnosed-run!`, D5.1).** Reds cross-check on a
+   fresh image ONLY when staleness is plausible: reload-signature failures,
+   an unexplained flip (failing test's traced set disjoint from the
+   just-edited forms — this also catches value-capture staleness because
+   captured calls bypass the trace), or missing/truncated trace info. A red
+   clearly caused by the edited forms returns immediately as
+   `{:diagnosis :genuine}` — one run, no restart. Cross-check outcomes:
+   red→green ⇒ `:staleness-detected`; red→red ⇒ `:fresh-confirmed`.
+   Compile-gate failures heal likewise: refresh + one load retry
+   (`:image-healed true` on the write result). `test_run {:fresh true}`
+   forces a faithful single run. Every write path passes its `:edited` qsym
+   set into `run-verification!` — keep that plumbing when adding write ops,
+   or reds regress to conservative restarts.
 4. **Warm spare.** `{:warm-spare? true}` keeps a `future`-started image
    warming; `fresh-image!` swaps to it (<~3s vs ~6-8s cold boot) and starts
    the next spare. On for the MCP server. `close!` derefs and stops the

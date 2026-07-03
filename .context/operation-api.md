@@ -41,7 +41,12 @@ by convention it must not redefine code; redefinition belongs to edit ops).
   mid-edit — only at this explicit call. Add rules deliberately (they must be
   provably behavior-preserving) and note them in the normalize ns.
 - `restart!` — agent-callable fresh image (D5 escape hatch).
-- `build!` — materialize `.clj` files (the C1/C6 explicit build).
+- `build!` — materialize `.clj` files (the C1/C6 explicit build). With
+  `:main` (qualified entry fn) it also emits the O4 native-binary recipe:
+  a generated launcher, a `:native` deps alias, and `build-native.sh`
+  (user runs it; needs GraalVM 21+ on PATH). Generators live in
+  `slopp.build`; X4 guards apply, plus: a deps.edn the build didn't
+  generate is never overwritten.
 
 Every edit ends with `run-verification!` (affected-narrowed, diagnosed) and a
 `:verify` delta. Result shape: `{:delta :warnings :test :affected}` +

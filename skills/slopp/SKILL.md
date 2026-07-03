@@ -110,3 +110,13 @@ rebuilds a faithful image from the store).
   only work when tests exist.
 - `test_run {:only [name]}` re-runs a single test while iterating on it.
 - Checkpoint when you'd naturally say "done with that".
+
+## Shipping
+
+`build {dir}` materializes a plain files project (absolute path, outside any
+repo you're working in). Add `main` (a qualified entry fn like
+`"calc.core/run-cli"`) and the output also carries a native-binary recipe:
+running the emitted `./build-native.sh` (needs GraalVM 21+ on PATH) compiles
+a self-contained executable — instant startup, no JVM required to run. Your
+entry fn either takes the CLI args as one vector (single arity-1 fn) or as
+varargs; the generated launcher adapts to whichever you wrote.

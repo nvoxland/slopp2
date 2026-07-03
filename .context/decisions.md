@@ -21,10 +21,25 @@ the change here (same commit).
 - **D4 — User macros banned** (`defmacro` rejected). Built-in macros fine;
   runtime `macroexpand` remains the oracle for those.
 - **D5 — No purity rule; refresh-vs-restart on an owned process.** Refresh is
-  the fast path; restart = always-faithful backstop. **Restart-as-diagnostic**:
-  never believe a red until it survives a fresh image (red→green = staleness
-  healed; red→red = confirmed). Warm spare keeps restarts off the critical
-  path. Detection is sampling; external side effects are out of scope.
+  the fast path; restart = always-faithful backstop. Warm spare keeps restarts
+  off the critical path. Detection is sampling; external side effects are out
+  of scope.
+- **D5.1 (user-flagged) — Smart red diagnosis, not restart-on-every-red.**
+  A red cross-checks on a fresh image ONLY when staleness is plausible:
+  (a) reload-signature failures (unbound var / unbound fn / no protocol impl /
+  same-named-class CCE); (b) an unexplained flip — a failing test whose traced
+  form-set doesn't intersect the just-edited forms (also catches value-capture
+  staleness, since captured calls bypass the trace); (c) missing trace info or
+  truncated failures. Otherwise `{:diagnosis :genuine}` — one run, no restart.
+  Compile-gate failures heal the same way: refresh + one retry (`:image-healed`).
+  `test_run {:fresh true}` forces a faithful single run; `restart` remains.
+- **P1 — The oracle stays OUT-of-process (asked and answered).** Subprocess
+  isolation is load-bearing for agent-generated code: guaranteed kills for
+  runaway/OOM evals, `System/exit` containment (no SecurityManager on 21+),
+  and D5's "fresh process = faithful by construction" purity (classloaders
+  leak statics/hooks/natives). Loopback nREPL RTT is not a measured cost;
+  spawn cost is amortized by the warm spare. Revisit only if we ever want
+  fleets of parallel throwaway read-only oracles (isolated-classloader mode).
 - **D6 — `!` naming enforced as a static effect-marker.** A fn must be
   `!`-named iff it transitively reaches an effectful leaf (call-graph
   propagation via clj-kondo; sound for first-order code; HOFs are the known
@@ -57,6 +72,18 @@ the change here (same commit).
 - **O2 — Edits auto-run affected tests** (trace-map narrowed; conservative
   full-ns fallback), result recorded on the delta.
 - **O3 — Query = static index + runtime oracle from day one** (`query-eval`).
+- **O4 — Native-binary build target.** `build!` with `:main` emits a GraalVM
+  native-image recipe alongside the sources: a generated gen-class launcher
+  (`src/native/main.clj`), a `:native` deps alias (graal-build-time +
+  direct linking), and an executable `build-native.sh`. The compile itself
+  stays an explicit user-run step — slopp never shells out to GraalVM. The
+  launcher's `gen-class` is host-generated scaffolding, NOT authored store
+  code, so it sits outside the D3 gate (same standing as `slopp.rt`'s
+  instrumentation). The dialect is what makes the target reliable: D3/D4's
+  bans (eval, read-string, gen-class, user macros) are exactly native-image's
+  closed-world assumptions. Launcher arg passing is arity-aware via the
+  index: a single fixed arity of 1 receives the CLI args as one vector;
+  anything else is `apply`'d -main style.
 
 ## H — host
 

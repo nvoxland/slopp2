@@ -147,14 +147,18 @@
     :description "Run a namespace's tests (all, or just those named in `only`) in the live image; record the result."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"}
-                               :only {:type "array" :items {:type "string"}}}
+                               :only {:type "array" :items {:type "string"}}
+                               :fresh {:type "boolean"}}
                   :required ["ns"]}}
    {:name "restart"
     :description "Restart the live image (D5 backstop); reload all forms."
     :inputSchema {:type "object" :properties {}}}
    {:name "build"
-    :description "Materialize every namespace to real .clj files under dir."
-    :inputSchema {:type "object" :properties {:dir {:type "string"}} :required ["dir"]}}])
+    :description "Materialize every namespace to real .clj files under dir (absolute path). Optional main (qualified entry fn, e.g. \"calc.core/run-cli\") also emits a GraalVM native-image recipe: a generated launcher plus an executable build-native.sh that compiles a self-contained native binary (optional name overrides the binary name)."
+    :inputSchema {:type "object"
+                  :properties {:dir {:type "string"} :main {:type "string"}
+                               :name {:type "string"}}
+                  :required ["dir"]}}])
 
 (defn- text [x]
   {:content [{:type "text" :text (if (string? x) x (pr-str x))}]})
@@ -181,6 +185,7 @@
                                      (:staleness-detected t) (assoc :staleness-healed true)))
         (:affected r) (assoc :affected (let [a (:affected r)]
                                          (if (= :all a) :all (count a))))
+        (:image-healed r) (assoc :image-healed true)
         (:existing-warnings r) (assoc :existing-warnings (:existing-warnings r))))))
 
 (defn- call-tool [session {:keys [name arguments]}]
@@ -219,12 +224,12 @@
       "edit_replace_form" (text (-> (api/edit-replace! session (sym :ns) (sym :name)
                                                        (:source a) :prompt (:prompt a))
                                     (select-keys [:error :warnings :existing-warnings
-                                                  :untested :test :affected :delta])
+                                                  :untested :image-healed :test :affected :delta])
                                     (summarize (:verbose a))))
       "edit_add_form"     (text (-> (api/add-form! session (sym :ns) (:source a)
                                                    :prompt (:prompt a))
                                     (select-keys [:error :warnings :existing-warnings
-                                                  :untested :test :affected :delta])
+                                                  :untested :image-healed :test :affected :delta])
                                     (summarize (:verbose a))))
       "edit_delete_form"  (text (-> (api/delete-form! session (sym :ns) (sym :name)
                                                       :prompt (:prompt a))
@@ -245,7 +250,7 @@
                                            (:steps a))
                                      :prompt (:prompt a))
                                     (select-keys [:error :step :group :warnings :existing-warnings
-                                                  :test :affected :deltas])
+                                                  :image-healed :test :affected :deltas])
                                     (summarize (:verbose a))))
       ;; arg forgiveness: every eval run guessed name/to before finding old/new
       "edit_rename"       (let [old (or (:old a) (:name a) (:from a))
@@ -273,9 +278,12 @@
                                       (summarize (:verbose a)))))
       "checkpoint"        (text (api/checkpoint! session :label (:label a)))
       "test_run"          (text (api/test-run! session (sym :ns)
-                                               :only (some->> (:only a) (mapv symbol))))
+                                               :only (some->> (:only a) (mapv symbol))
+                                               :fresh (:fresh a)))
       "restart"           (do (api/restart! session) (text "restarted"))
-      "build"             (text (api/build! session (:dir a)))
+      "build"             (text (api/build! session (:dir a)
+                                            :main (some-> (:main a) symbol)
+                                            :name (:name a)))
       (throw (ex-info (str "unknown tool: " name ". Available: "
                            (str/join ", " (map :name tools)))
                       {})))))

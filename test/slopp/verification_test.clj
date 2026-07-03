@@ -50,6 +50,39 @@
             (finally (api/close! sess2)))))
       (finally (api/close! sess)))))
 
+(deftest reload-signature-reds-still-heal              ; D5.1 belt-and-suspenders
+  ;; Even when the red IS on an edited path (flip rule says "explained"), an
+  ;; unbound-var-style failure smells like staleness and must cross-check.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'sig.core
+                   (str "(ns sig.core (:require [clojure.test :refer [deftest is]]))\n"
+                        "(defn helper [x] (* 2 x))\n"
+                        "(defn f [x] (helper x))\n"
+                        "(deftest f-t (is (= 10 (f 5))))\n"))
+      ;; poison: rip helper out of the image behind the store's back
+      (repl/eval! (:image @sess) "(ns-unmap 'sig.core 'helper)")
+      ;; editing f now hits the compile gate against the stale image; D5.1
+      ;; heals it: fresh image, retried load, write proceeds
+      (let [r (api/edit-replace! sess 'sig.core 'f "(defn f [x] (helper x))"
+                                 :prompt "touch f while helper is stale")]
+        (is (nil? (:error r)))
+        (is (true? (:image-healed r)))
+        (is (zero? (+ (:fail (:test r)) (:error (:test r))))))
+      (finally (api/close! sess)))))
+
+(deftest test-run-fresh-forces-a-cross-check
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'fr.core
+                   (str "(ns fr.core (:require [clojure.test :refer [deftest is]]))\n"
+                        "(defn f [x] x)\n(deftest f-t (is (= 1 (f 1))))\n"))
+      (let [before (:port (:image @sess))
+            res    (api/test-run! sess 'fr.core :fresh true)]
+        (is (zero? (:fail res)))
+        (is (not= before (:port (:image @sess)))))   ; image really was replaced
+      (finally (api/close! sess)))))
+
 (deftest test-run-only-targets-named-tests
   (let [sess (api/open!)]
     (try
@@ -63,17 +96,20 @@
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'vdemo target)
-      (testing "staleness: image drifts behind the store's back -> red heals to green"
+      (testing "staleness flip: image drifts behind the store's back; NOTHING was
+                edited, so the red is unexplained -> restart heals it"
         ;; poison the image only (the store is untouched) — the classic stale state
         (repl/eval! (:image @sess) "(in-ns 'vdemo) (def add (fn [x y] 999))")
         (let [res (api/test-run! sess 'vdemo)]
           (is (zero? (+ (:fail res) (:error res))))
           (is (true? (:staleness-detected res)))))
-      (testing "genuine bug: red survives the fresh image -> confirmed, not healed"
+      (testing "genuine red (D5.1): assertion failure on the just-edited path is
+                reported immediately — ONE run, no restart, no cross-check"
         (let [r (api/edit-replace! sess 'vdemo 'add "(defn add [x y] (- x y))"
                                    :prompt "break it")]
           (is (= 1 (:fail (:test r))))
-          (is (true? (:fresh-confirmed (:test r))))
+          (is (= :genuine (:diagnosis (:test r))))
+          (is (nil? (:fresh-confirmed (:test r))))
           (is (nil? (:staleness-detected (:test r))))
           (testing "the WHY is in the result (F1) — not lost to image stdout"
             (let [f (first (:failures (:test r)))]
