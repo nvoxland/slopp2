@@ -71,8 +71,8 @@ F1 failure-details in results ✅ · F2 atomic edit groups ✅ (calculator bench
 −49% wall) · F3 `{:error}` on unparseable source ✅ · F4 `create-ns!`/
 `ns_create` ✅ · F5 `add-require!`/`ns_add_require` ✅ (structural, dup-checked)
 · F6 VFS-mapped stack traces ✅ (nREPL load-file + row padding; frames cite the
-exact lines `query-source` shows) · F7 stdout-vs-`!` scope decision (open —
-needs user; recommendation: keep `!` = mutation per Clojure convention, surface
-console IO separately if ever needed) · F8 ✅ (ingest tidy-return; `:untested`
+exact lines `query-source` shows) · F7 ✅ **decided (user): `!` = mutation only**, per Clojure convention —
+stdout/console IO is NOT a `!` trigger; if IO tracking ever matters it becomes
+a separate `:effects` fact, never a naming rule · F8 ✅ (ingest tidy-return; `:untested`
 flag on edits no test exercises; `build!` emits `src/` + minimal `deps.edn`).
 Details: `projects/calculator/REPORT.md` (untracked) and `.context/dogfooding.md`.

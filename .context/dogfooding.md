@@ -29,9 +29,9 @@ and **token cost** (chars/4 of the JSON actually sent/received through
   app's final test run isn't green.
 - Results append to `benchmarks/results.md` (committed — it's the progress
   record): git sha, app, steps, wall ms, tokens in/out.
-- **Run it at every milestone that might move the numbers** (verification
-  changes, edit-path changes, restart changes) and commit the new rows with
-  that milestone.
+- **Run it when the numbers should be changing** (user guidance) — edit-path /
+  verification / restart changes, not routinely. Skip it for query additions,
+  docs, or anything off the measured path.
 - Scripts should exercise *current best practice* (e.g. once edit groups
   exist, the multi-form fix step uses them) — the benchmark measures the
   product as it's meant to be used. When a script changes, note it in the
