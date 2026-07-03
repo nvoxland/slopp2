@@ -277,3 +277,22 @@ Findings (3c):
 - F-3c4 SKILL.md lacks the edit_group steps schema (opus probed for it).
 - F-3c5 verification narrowing before a trace map exists can report a
   PARTIAL red set for a group (opus: only shipping-t of 3 expected reds).
+
+## Multi-Claude eval: two real Claude Code instances, one store (@ 5d3c48a)
+
+The Phase-4/5 integration test, first run with REAL clients (spec/prompts:
+projects/eval-multi/SPEC.md; acceptance 14/14 PASS). Two headless
+claude-sonnet-5 instances, each with its OWN stdio MCP server on one shared
+store; turns hook-automated; alice on a branch with a DESIGNED same-form
+conflict against bob on main.
+
+- alice: 45 turns / 165s -- branch, feature, merge; resolved the task-line
+  MV conflict by integrating both features, unprompted, 22/22 green.
+- bob: 20 turns / 114s -- watched alice's work land mid-session through
+  journal sync, "never had to coordinate or lock anything"; scoped his own
+  episode with query_changes.
+- Every layer built this phase carried real load for the first time: native
+  stdio integration, turn gate + hooks (verbatim prompts in provenance),
+  per-agent servers, cross-server sync, branch/merge causal delivery,
+  episodes. Zero integration failures; the only scoring bugs were in the
+  harness (field name, grep escape), not the product.
