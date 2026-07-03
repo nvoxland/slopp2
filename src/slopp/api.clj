@@ -1051,6 +1051,87 @@
                        :test     summary
                        :affected (or affected :all)}))))))))))
 
+(defn merge!
+  "Phase 4 m2: merge a DIVERGED COPY of this project back into the live
+  session. A 'fork' is just a copied project dir edited by its own slopp
+  server; `other-dir` is that copy. Their delta-log suffix replays onto our
+  store (store/merge-logs): different-form work lands, identical changes
+  converge, same-form divergence returns `:conflicts` (ours kept, theirs
+  surfaced — resolve by hand with edit_replace_form). Everything that
+  arrives hot-loads and verifies like any write; ONE `:merge` delta records
+  what happened."
+  [session other-dir]
+  (let [t0   (System/nanoTime)
+        f    (io/file (str other-dir))
+        db-f (io/file f ".slopp" "store.db")]
+    (cond
+      (not (.isAbsolute f))
+      {:error "merge needs an ABSOLUTE project-dir path"}
+
+      (not (.exists db-f))
+      {:error (str "no slopp store under " other-dir)}
+
+      :else
+      (let [conn   (db/open! (str f))
+            theirs (try (db/load-store conn)
+                        (finally (.close ^java.sql.Connection conn)))
+            base   (:store @session)
+            r      (store/merge-logs base theirs)]
+        (cond
+          (nil? (:fork-point r))
+          {:error "stores share no history — this is not a fork of this project"}
+
+          (and (zero? (:merged r)) (empty? (:conflicts r)))
+          {:merged 0 :conflicts [] :note "already converged — nothing to merge"}
+
+          :else
+          (let [st'      (:store r)
+                load-err (or ;; new namespaces first, dependency order
+                          (some (fn [ns-sym]
+                                  (when (contains? (set (:new-nses r)) ns-sym)
+                                    (image/load-ns! (:image @session) st' ns-sym)))
+                                (store/ns-dependency-order st'))
+                          ;; then every changed form (compile gate, heals)
+                          (:err (hot-load-all! session st'
+                                               (:changed-form-ids r))))]
+            (if load-err
+              (do (fresh-image! session)
+                  {:error (str "merge failed to compile: " load-err)})
+              (let [[st'' mdelta] (store/record-merge st' (str other-dir) r)]
+                (if-not (try-commit! session base st'')
+                  {:conflict {:reason "store changed during merge — retry"}}
+                  (let [new-deltas   (drop (count (store/deltas base))
+                                           (store/deltas st''))
+                        touched-nses (vec (distinct
+                                           (concat (keep :ns new-deltas)
+                                                   (:new-nses r))))
+                        _            (doseq [d new-deltas]
+                                       (persist-async! session d
+                                                       (filterv #(get-in st'' [:namespaces %])
+                                                                touched-nses)))
+                        edited       (into #{}
+                                           (keep (fn [id]
+                                                   (when-let [e (store/form-by-id st'' id)]
+                                                     (symbol (str (store/ns-of-form-id st'' id))
+                                                             (str (or (:name e) (:id e)))))))
+                                           (:changed-form-ids r))
+                        verify-nses  (vec (remove #{'*session*} touched-nses))
+                        summary      (when (seq verify-nses)
+                                       (run-verification! session verify-nses nil
+                                                          :edited edited))]
+                    (when summary
+                      (swap! session update :store
+                             store/record-verification verify-nses summary)
+                      (persist-last! session))
+                    (with-ms
+                      (cond-> {:merged     (:merged r)
+                               :conflicts  (:conflicts r)
+                               :merge-delta (:id mdelta)}
+                        (seq (:new-nses r)) (assoc :new-nses (:new-nses r))
+                        (seq (:notes r))    (assoc :notes (:notes r))
+                        summary             (assoc :test summary))
+                      t0)))))))))))
+
 (defn build!
   "C1/C6 explicit build: materialize a runnable project under `dir` —
   `src/<ns-path>.clj` per namespace plus a minimal `deps.edn` (F8). Guarded

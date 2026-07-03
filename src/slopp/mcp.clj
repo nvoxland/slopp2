@@ -177,6 +177,11 @@
    {:name "help"
     :description "The slopp workflow cheat-sheet: which tool for what, how to read results."
     :inputSchema {:type "object" :properties {}}}
+   {:name "merge_from"
+    :description "Merge a diverged COPY of this project (a fork = a copied project dir, edited by its own slopp server) back into this session. Different-form work lands; same-form divergence returns :conflicts (ours kept, theirs surfaced). Absolute dir path."
+    :inputSchema {:type "object"
+                  :properties {:dir {:type "string"}}
+                  :required ["dir"]}}
    {:name "restart"
     :description "Restart the live image (D5 backstop); reload all forms."
     :inputSchema {:type "object" :properties {}}}
@@ -398,6 +403,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
                                                :only (some->> (:only a) (mapv symbol))
                                                :fresh (:fresh a)))
       "help"              (text cheat-sheet)
+      "merge_from"        (text (api/merge! session (:dir a)))
       "restart"           (do (api/restart! session) (text "restarted"))
       "build"             (text (api/build! session (:dir a)
                                             :main (some-> (:main a) symbol)

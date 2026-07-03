@@ -97,6 +97,20 @@ the change here (same commit).
   store.db remain unsupported (divergent in-memory stores); that's what
   fork/merge (m2) and replica sync (m3, deferred) are for.
 
+- **P4-m2 — Fork = a copied project dir; merge = delta-log replay
+  (C4/C5 activated).** `store/merge-logs` replays theirs' suffix onto ours,
+  form-id-keyed: different-form work lands (granularity dodge across
+  replicas); identical changes converge silently (⇒ merge is idempotent);
+  same-form divergence = MV conflict — ours kept, theirs surfaced in
+  `:conflicts` and on the `:merge` delta, resolved by hand. Add/add id
+  collisions remap to fresh ids (fork-point detection compares full delta
+  VALUES — both sides allocate the same next id for different work).
+  Changeset ops (rename/normalize) apply all-or-conflict; `:move` skips with
+  a note. `api/merge!` owns image loads (new nses in dep order, then changed
+  forms through the compile gate) + whole-touched-nses verification + ONE
+  `:merge` provenance delta. Globally-unique ids (C2's uuid/lamport) remain
+  deferred — remap suffices for dir-forks.
+
 ## H — host
 
 - **H1 — slopp itself is Clojure/JVM** (same runtime as image + tooling; no

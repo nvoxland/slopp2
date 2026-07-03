@@ -3,7 +3,9 @@
   (POST /mcp) + per-agent attribution on every delta."
   (:require [clojure.test :refer [deftest is testing]]
             [cheshire.core :as json]
+            [clojure.java.shell]
             [slopp.api :as api]
+            [slopp.store :as store]
             [slopp.http :as http])
   (:import [java.net URI]
            [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
@@ -85,3 +87,56 @@
         (is (= "adder"    (by-op :add)))
         (is (= "renamer"  (by-op :rename))))
       (finally (api/close! sess)))))
+
+(deftest fork-edit-merge-end-to-end                     ; m2, the whole story
+  (let [root  (str (System/getProperty "java.io.tmpdir") "/slopp-m2-" (System/nanoTime))
+        a-dir (str root "/main")
+        b-dir (str root "/fork")]
+    (try
+      ;; 1. mainline project is born
+      (let [sess (api/open! {:dir a-dir})]
+        (try
+          (api/ingest! sess 'fm.core
+                       (str "(ns fm.core (:require [clojure.test :refer [deftest is]]))\n"
+                            "(defn f [x] (inc x))\n"
+                            "(defn g [x] (f x))\n"
+                            "(deftest f-t (is (= 2 (f 1))))\n")
+                       :agent "founder")
+          (finally (api/close! sess))))
+      ;; 2. fork = copy the project dir
+      (clojure.java.shell/sh "cp" "-r" a-dir b-dir)
+      ;; 3. the fork diverges on its own server (edits g, adds h + a test)
+      (let [sess (api/open! {:dir b-dir})]
+        (try
+          (api/edit-replace! sess 'fm.core 'g "(defn g [x] (f (f x)))"
+                             :prompt "double-apply" :agent "forker")
+          (api/add-form! sess 'fm.core
+                         "(defn h [x] (* 10 (g x)))" :agent "forker")
+          (api/add-form! sess 'fm.core
+                         "(deftest h-t (is (= 30 (h 1))))" :agent "forker")
+          (finally (api/close! sess))))
+      ;; 4. meanwhile mainline diverges on a DIFFERENT form
+      (let [sess (api/open! {:dir a-dir})]
+        (try
+          (api/edit-replace! sess 'fm.core 'f "(defn f [x] (+ 1 x))"
+                             :prompt "same behavior, our style" :agent "mainliner")
+          ;; 5. merge the fork back into the LIVE session
+          (let [r (api/merge! sess b-dir)]
+            (is (nil? (:error r)) (pr-str r))
+            (is (empty? (:conflicts r)))
+            (is (= 3 (:merged r)))
+            (testing "the live image runs the merged whole"
+              (is (= [30] (api/query-eval sess "(fm.core/h 1)"))))
+            (testing "merge verification ran BOTH sides' tests green"
+              (is (zero? (+ (:fail (:test r)) (:error (:test r))))))
+            (testing "provenance: the merge delta + their agent attribution"
+              (is (some #(= :merge (:op %)) (store/deltas (:store @sess))))
+              (is (re-find #"forker"
+                           (pr-str (api/query-history sess :contains "double-apply"))))))
+          ;; 6. merging again is a no-op (idempotent)
+          (let [r2 (api/merge! sess b-dir)]
+            (is (zero? (:merged r2)))
+            (is (empty? (:conflicts r2))))
+          (finally (api/close! sess))))
+      (finally
+        (clojure.java.shell/sh "rm" "-rf" root)))))
