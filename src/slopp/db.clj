@@ -1,0 +1,106 @@
+(ns slopp.db
+  "Durable system of record (C7): SQLite at `<dir>/.slopp/store.db`. Because of
+  C1 there are no `.clj` files on disk — this database IS the source code — so
+  it gets a real storage engine rather than hand-rolled EDN files.
+
+  Layout:
+  - `deltas`   — the append-only log (the history). Op-specific fields live in
+                 an EDN `payload` column; EDN stays the value representation,
+                 SQLite supplies the durability mechanics.
+  - `elements` — the materialized current form-state, kept transactionally
+                 in-step with the log (open = read rows, no log replay).
+  - `meta`     — the id counter, so a reopened store keeps minting unique ids.
+
+  Every mutation lands in ONE transaction: delta row + its namespace's element
+  rows + next-id, atomically. WAL mode for crash safety."
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
+            [next.jdbc :as jdbc]
+            [rewrite-clj.parser :as p]
+            [rewrite-clj.node :as n]))
+
+(defn open!
+  "Open (creating if needed) the store db under `dir`; returns the connection."
+  ^java.sql.Connection [dir]
+  (let [f (io/file dir ".slopp" "store.db")]
+    (io/make-parents f)
+    (let [conn (jdbc/get-connection
+                (jdbc/get-datasource {:dbtype "sqlite" :dbname (str f)}))]
+      (jdbc/execute! conn ["PRAGMA journal_mode=WAL"])
+      (jdbc/execute! conn ["CREATE TABLE IF NOT EXISTS meta (
+                              k TEXT PRIMARY KEY, v TEXT NOT NULL)"])
+      (jdbc/execute! conn ["CREATE TABLE IF NOT EXISTS deltas (
+                              seq     INTEGER PRIMARY KEY AUTOINCREMENT,
+                              id      TEXT UNIQUE NOT NULL,
+                              op      TEXT NOT NULL,
+                              ns      TEXT NOT NULL,
+                              payload TEXT NOT NULL)"])
+      (jdbc/execute! conn ["CREATE INDEX IF NOT EXISTS deltas_ns ON deltas(ns)"])
+      (jdbc/execute! conn ["CREATE TABLE IF NOT EXISTS elements (
+                              ns      TEXT NOT NULL,
+                              pos     INTEGER NOT NULL,
+                              kind    TEXT NOT NULL,
+                              form_id TEXT,
+                              name    TEXT,
+                              source  TEXT NOT NULL,
+                              PRIMARY KEY (ns, pos))"])
+      conn)))
+
+(defn persist!
+  "Write one mutation atomically: the delta, its namespace's (full) current
+  element rows, and the id counter. Namespaces are small; rewriting one ns's
+  rows per edit keeps the write-through trivially correct."
+  [conn store delta]
+  (jdbc/with-transaction [tx conn]
+    (jdbc/execute! tx ["INSERT INTO deltas (id, op, ns, payload) VALUES (?,?,?,?)"
+                       (:id delta) (name (:op delta)) (str (:ns delta))
+                       (pr-str (dissoc delta :id :op :ns))])
+    (when-let [elems (get-in store [:namespaces (:ns delta) :elements])]
+      (jdbc/execute! tx ["DELETE FROM elements WHERE ns = ?" (str (:ns delta))])
+      (doseq [[pos e] (map-indexed vector elems)]
+        (jdbc/execute! tx ["INSERT INTO elements (ns,pos,kind,form_id,name,source)
+                            VALUES (?,?,?,?,?,?)"
+                           (str (:ns delta)) pos (name (:kind e)) (:id e)
+                           (some-> (:name e) str) (n/string (:node e))])))
+    (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('next-id', ?)
+                        ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                       (str (:next-id store))]))
+  nil)
+
+(defn- parse-node
+  "Re-parse one element's canonical serialization (its source text) back to its
+  CST node. Lossless by rewrite-clj's parse/print round-trip."
+  [source]
+  (let [nodes (n/children (p/parse-string-all source))]
+    (assert (= 1 (count nodes))
+            (str "element source did not reparse to one node: " (pr-str source)))
+    (first nodes)))
+
+(defn- row->element [row]
+  (let [kind (keyword (:elements/kind row))
+        node (parse-node (:elements/source row))]
+    (if (= :form kind)
+      {:id   (:elements/form_id row) :kind :form
+       :name (some-> (:elements/name row) symbol) :node node}
+      {:kind :sep :node node})))
+
+(defn- row->delta [row]
+  (merge {:id (:deltas/id row)
+          :op (keyword (:deltas/op row))
+          :ns (symbol (:deltas/ns row))}
+         (edn/read-string (:deltas/payload row))))
+
+(defn load-store
+  "Reconstruct the full in-memory store from the db, or nil if empty."
+  [conn]
+  (when-let [next-id (some-> (jdbc/execute-one!
+                              conn ["SELECT v FROM meta WHERE k = 'next-id'"])
+                             :meta/v Long/parseLong)]
+    {:namespaces (reduce (fn [m row]
+                           (update-in m [(symbol (:elements/ns row)) :elements]
+                                      (fnil conj []) (row->element row)))
+                         {}
+                         (jdbc/execute! conn ["SELECT * FROM elements ORDER BY ns, pos"]))
+     :deltas     (mapv row->delta
+                       (jdbc/execute! conn ["SELECT * FROM deltas ORDER BY seq"]))
+     :next-id    next-id}))

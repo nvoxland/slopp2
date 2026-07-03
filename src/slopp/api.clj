@@ -6,7 +6,10 @@
   deltas). `query-eval` lets it observe the live image (the oracle) without
   mutating code.
 
-  The MCP stdio transport is a thin deferred adapter over these functions."
+  With `{:dir ...}` the session is durable (C7): the store is write-through to
+  SQLite at `<dir>/.slopp/store.db`, and `open!` reconstructs both the store and
+  the live image from it. Without `:dir` the session is ephemeral (tests,
+  scratch)."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [rewrite-clj.node :as n]
@@ -15,21 +18,41 @@
             [slopp.index :as index]
             [slopp.repl :as repl]
             [slopp.image :as image]
-            [slopp.edit :as edit]))
+            [slopp.edit :as edit]
+            [slopp.db :as db]))
 
 (defn open!
-  "Start a session: a fresh owned image + an empty store."
-  []
-  (atom {:store (store/empty-store) :image (repl/start!)}))
+  "Start a session: the owned image + the store — loaded from `<dir>/.slopp/`
+  when `:dir` is given and it has history, empty otherwise."
+  ([] (open! {}))
+  ([{:keys [dir]}]
+   (let [conn    (when dir (db/open! dir))
+         store   (or (some-> conn db/load-store) (store/empty-store))
+         image   (repl/start!)
+         session (atom {:store store :image image :db conn})]
+     (doseq [ns-sym (keys (:namespaces store))]
+       (image/load-ns! image store ns-sym))
+     session)))
 
 (defn close! [session]
   (repl/stop! (:image @session))
+  (when-let [^java.sql.Connection conn (:db @session)]
+    (.close conn))
   nil)
+
+(defn- persist-last!
+  "Write-through (C7): land the store's newest delta (plus its namespace's
+  current elements) in the db, atomically. No-op for ephemeral sessions."
+  [session]
+  (let [{:keys [db store]} @session]
+    (when db
+      (db/persist! db store (last (store/deltas store))))))
 
 (defn ingest!
   "Ingest `source` as `ns-sym` and load it into the live image."
   [session ns-sym source]
   (swap! session update :store store/ingest ns-sym source)
+  (persist-last! session)
   (image/load-ns! (:image @session) (:store @session) ns-sym)
   session)
 
@@ -82,7 +105,13 @@
   running the full pipeline and updating the session on success."
   [session ns-sym nm new-source & {:keys [prompt]}]
   (let [r (edit/apply-replace! @session ns-sym nm new-source :prompt prompt)]
-    (when-not (:error r) (reset! session (:system r)))
+    (when-not (:error r)
+      (reset! session (:system r))
+      ;; two deltas landed (:replace, then :verify from the test re-run)
+      (let [{:keys [db store]} @session]
+        (when db
+          (doseq [d (take-last 2 (store/deltas store))]
+            (db/persist! db store d)))))
     r))
 
 (defn test-run!
@@ -90,6 +119,7 @@
   [session ns-sym]
   (let [res (image/test-run (:image @session) ns-sym)]
     (swap! session update :store store/record-verification ns-sym res)
+    (persist-last! session)
     res))
 
 (defn restart!
