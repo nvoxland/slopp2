@@ -8,3 +8,6 @@
 | 2026-07-03 | haiku  | slopp@23670e4 (X2/X3 active) | 78,624  | 970s  | 137 | FAIL acceptance: inlined 5 namespaces into process-order! ("compilation issues" = X3 half-loaded image), rush shipping not doubled in workflow, image inconsistent |
 | 2026-07-03 | opus   | slopp@23670e4 (X2/X3 active) | 144,621 | 1521s | 87  | PASS; diagnosed X2 (rename load order) + X3 (restart load order), manually repaired image |
 | 2026-07-03 | sonnet | slopp@23670e4 (X2/X3 active) | 161,831 | 1539s | 121 | PASS; found 6 namespaces never loaded (X3 at server open), rehydrated by hand, avoided edit_rename (X2) |
+| 2026-07-03 | haiku  | slopp@b3b5dd4 (X2/X3/X4 fixed) | 48,684 | 437s | 66 | PASS acceptance; clean cross-ns code (no inlining this time) |
+| 2026-07-03 | sonnet | slopp@b3b5dd4 (X2/X3/X4 fixed) | 45,977 | 244s | 19 | PASS; one-shot edit_rename across 3 nses; BEAT its files baseline (-42% tok, -39% wall, -74% calls) |
+| 2026-07-03 | opus   | slopp@b3b5dd4 (X2/X3/X4 fixed) | 52,790 | 342s | 19 | PASS; TWO mutations total (1 rename + 1 group of 8 forms); ~parity with files (+12% tok) |

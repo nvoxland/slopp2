@@ -205,3 +205,31 @@ Verdict: round 3 is defect-dominated, not thesis-answering. Notable even so:
 two of three slopp agents delivered correct cross-cutting results against a
 broken image, with correct provenance; the files cohort's costs grew with
 scale as predicted. Round 3b (rerun post-fix) is the real terrain test.
+
+## Eval round 3b: scale RERUN on fixed slopp (@ b3b5dd4)
+
+Same seed, same task, X2/X3/X4 fixed. 3/3 acceptance PASS (identical correct
+rush math; haiku produced clean cross-ns code this time).
+
+| model | files | slopp 3b | delta (slopp vs files) |
+|---|---|---|---|
+| haiku  | 36.3k / 192s / 40 | 48.7k / 437s / 66 | +34% tok |
+| sonnet | 79.2k / 403s / 72 | 46.0k / 244s / 19 | **-42% tok, -39% wall, -74% calls** |
+| opus   | 47.2k / 283s / 43 | 52.8k / 342s / 19 | +12% tok, -56% calls |
+
+THE CROSSOVER, MEASURED:
+- Aggregate at 12-ns scale: slopp 147.5k vs files 162.7k tokens (-9%), and
+  104 vs 155 tool calls -- first scale where slopp wins overall.
+- The gradients tell the real story. Files cost grew +54% avg from round-2
+  scale to round-3 scale (read-based orientation taxes with size). slopp's
+  cost was flat-to-DOWN across the same jump (sonnet 68k->46k) -- orientation
+  via outline/references doesn't grow with codebase size.
+- Workflow shape converged on the design's intent: opus did the whole task in
+  TWO mutations (one cross-ns rename, one 8-form group); sonnet's rename
+  propagated across 3 namespaces in one shot.
+- haiku remains above its files baseline (weak-model overhead on the tool
+  workflow), but passed acceptance with clean architecture -- vs FAILING with
+  inlined spaghetti pre-fix.
+New (minor) finding N1: effectful-vars doesn't propagate effects across
+namespaces (a !-named callee in another ns should count as an effectful
+anchor); process-order! showed :effectful? false.
