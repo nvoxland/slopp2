@@ -1,15 +1,14 @@
 (ns slopp.edit
   "The edit pipeline (O1 whole-form replace): parse -> dialect-check (D3/D4) ->
-  commit delta (D-store) -> [hot-reload into the image (D5) + run affected tests
-  (C4)] -> return with `!`-effect warnings (D6). This is the authoring loop where
-  every prior decision converges."
+  commit delta (D-store) -> hot-reload into the image (D5) -> return with
+  `!`-effect warnings (D6). Verification (affected tests + restart-as-diagnostic)
+  is orchestrated one level up, in slopp.api."
   (:require [rewrite-clj.parser :as p]
             [rewrite-clj.node :as n]
             [slopp.store :as store]
             [slopp.render :as render]
             [slopp.index :as index]
-            [slopp.repl :as repl]
-            [slopp.image :as image]))
+            [slopp.repl :as repl]))
 
 (def ^:private banned-heads
   "D4 — user macros are banned."
@@ -56,10 +55,9 @@
             {:error (str "no form named " form-name " in " ns-sym)}))))))
 
 (defn apply-replace!
-  "Full pipeline over `system` {:store store :image handle}: `replace-form`, then
-  on success hot-reload the new form into the live image (D5) and re-run the
-  namespace's tests, recording the result as provenance (C4). Returns
-  {:system {:store ...} :delta :warnings :test result} or {:error msg}."
+  "Pipeline through hot-reload over `system` {:store store :image handle}:
+  `replace-form`, then on success redefine the form in the live image (D5).
+  Returns {:system {:store ...} :delta :warnings} or {:error msg}."
   [system ns-sym form-name new-source & {:keys [prompt]}]
   (let [r (replace-form (:store system) ns-sym form-name new-source :prompt prompt)]
     (if (:error r)
@@ -67,9 +65,6 @@
       (let [image (:image system)]
         (repl/eval! image (format "(in-ns '%s)" ns-sym))
         (repl/eval! image new-source)                 ; hot-redefine the var
-        (let [test-res (image/test-run image ns-sym)
-              store'   (store/record-verification (:store r) ns-sym test-res)]
-          {:system   (assoc system :store store')
-           :delta    (:delta r)
-           :warnings (:warnings r)
-           :test     test-res})))))
+        {:system   (assoc system :store (:store r))
+         :delta    (:delta r)
+         :warnings (:warnings r)}))))

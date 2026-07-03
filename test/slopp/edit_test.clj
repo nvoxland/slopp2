@@ -44,8 +44,10 @@
       (is (some #(= 'demo/add (:var %)) (:warnings r)))
       (is (some #(= "add!" (:suggest %)) (:warnings r))))))
 
-(deftest apply-replace-closes-the-loop
-  ;; The whole thesis in one test: red -> edit -> hot-reload -> green + provenance.
+(deftest apply-replace-hot-reloads
+  ;; red -> edit -> hot-reload -> green in the image + a provenance delta.
+  ;; (Verification orchestration — affected tests, diagnostics — is api-level;
+  ;; see slopp.verification-test.)
   (let [target (str "(ns demo2\n"
                     "  (:require [clojure.test :refer [deftest is]]))\n"
                     "(defn add [x y] (+ x y))\n"
@@ -58,12 +60,12 @@
         (is (= 1 (:fail (image/test-run h 'demo2)))))
       (let [r (edit/apply-replace! {:store s :image h} 'demo2 'add
                                    "(defn add [x y] (+ x y 1))" :prompt "off-by-one")]
-        (testing "edit hot-reloads + reruns tests -> now green"
+        (testing "the edit hot-reloads: image reflects the redefinition, tests green"
           (is (nil? (:error r)))
-          (is (= 0 (:fail (:test r))))
-          (is (= 1 (:pass (:test r)))))
-        (testing "image reflects the redefinition"
-          (is (= [6] (repl/eval! h "(demo2/add 2 3)"))))
-        (testing "verification recorded as provenance (C4)"
-          (is (= :verify (:op (last (store/deltas (:store (:system r)))))))))
+          (is (= [6] (repl/eval! h "(demo2/add 2 3)")))
+          (is (= 0 (:fail (image/test-run h 'demo2)))))
+        (testing "the :replace delta is recorded with its prompt"
+          (let [d (last (store/deltas (:store (:system r))))]
+            (is (= :replace (:op d)))
+            (is (= "off-by-one" (:prompt d))))))
       (finally (repl/stop! h)))))

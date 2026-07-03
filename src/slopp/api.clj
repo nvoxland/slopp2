@@ -98,39 +98,107 @@
   [session code]
   (repl/eval! (:image @session) code))
 
-;; --- edit.* / runtime ---
+;; --- verification (D1 tracing + D5 restart-as-diagnostic) ---
 
-(defn edit-replace!
-  "Replace the form `nm` in `ns-sym` with `new-source` (O1 whole-form replace),
-  running the full pipeline and updating the session on success."
-  [session ns-sym nm new-source & {:keys [prompt]}]
-  (let [r (edit/apply-replace! @session ns-sym nm new-source :prompt prompt)]
-    (when-not (:error r)
-      (reset! session (:system r))
-      ;; two deltas landed (:replace, then :verify from the test re-run)
-      (let [{:keys [db store]} @session]
-        (when db
-          (doseq [d (take-last 2 (store/deltas store))]
-            (db/persist! db store d)))))
-    r))
+(defn- green? [summary]
+  (zero? (+ (:fail summary 0) (:error summary 0))))
 
-(defn test-run!
-  "Run `ns-sym`'s tests in the image, recording the result (C4)."
-  [session ns-sym]
-  (let [res (image/test-run (:image @session) ns-sym)]
-    (swap! session update :store store/record-verification ns-sym res)
-    (persist-last! session)
-    res))
-
-(defn restart!
-  "D5 backstop: throw the image away, start a fresh one, and reload every
-  namespace from the store — a faithful image by construction."
+(defn- fresh-image!
+  "Replace the image with a fresh process reloaded from the store — faithful by
+  construction (the D5 backstop)."
   [session]
   (swap! session update :image repl/restart!)
   (let [{:keys [store image]} @session]
     (doseq [ns-sym (keys (:namespaces store))]
-      (image/load-ns! image store ns-sym)))
+      (image/load-ns! image store ns-sym))))
+
+(defn restart!
+  "D5 escape hatch: the agent-callable fresh-image restart."
+  [session]
+  (fresh-image! session)
   session)
+
+(defn- traced-run!
+  "Run `test-ns`'s tests (all, or `only` names) with form-tracing; absorb the
+  observed test→form map into the session; return the summary."
+  [session test-ns only]
+  (let [{:keys [image store]} @session
+        {:keys [summary trace]} (image/traced-test-run image store test-ns :only only)]
+    (swap! session update :test-map merge trace)
+    summary))
+
+(defn- diagnosed-run!
+  "Run tests; on red, cross-check on a fresh image before believing it (D5
+  restart-as-diagnostic — the oracle must not return a false verdict).
+  red→green ⇒ the red was image staleness: healed, flagged.
+  red→red   ⇒ a real failure, confirmed against a faithful image."
+  [session test-ns only]
+  (let [r1 (traced-run! session test-ns only)]
+    (if (green? r1)
+      r1
+      (do (fresh-image! session)
+          (let [r2 (traced-run! session test-ns only)]
+            (if (green? r2)
+              (assoc r2 :staleness-detected true)
+              (assoc r2 :fresh-confirmed true)))))))
+
+(defn- affected-tests
+  "Which tests must re-run after editing `ns-sym/nm`: the tests observed (via
+  tracing) to exercise that form — or the form itself if it IS a test. nil =
+  no trace information; run everything (conservative)."
+  [session ns-sym nm]
+  (let [qform (symbol (str ns-sym) (str nm))
+        tmap  (:test-map @session)]
+    (if (contains? tmap qform)
+      [qform]
+      (let [hits (->> tmap
+                      (keep (fn [[t forms]] (when (contains? forms qform) t)))
+                      sort vec)]
+        (when (seq hits) hits)))))
+
+(defn- run-verification!
+  "Diagnosed run of `affected` tests (grouped by their namespace), or of all of
+  `default-ns`'s tests when there's no trace information."
+  [session default-ns affected]
+  (if (nil? affected)
+    (diagnosed-run! session default-ns nil)
+    (reduce (fn [acc [tns tsyms]]
+              (merge-with (fn [a b] (if (number? a) (+ a b) (or b a)))
+                          acc
+                          (diagnosed-run! session tns (mapv (comp symbol name) tsyms))))
+            {}
+            (group-by (comp symbol namespace) affected))))
+
+;; --- edit.* / runtime ---
+
+(defn edit-replace!
+  "Replace the form `nm` in `ns-sym` with `new-source` (O1 whole-form replace):
+  pipeline + hot-reload, then re-verify — only the tests the trace map says
+  exercise this form (D1), cross-checked on a fresh image if red (D5) — and
+  record the outcome as provenance (C4)."
+  [session ns-sym nm new-source & {:keys [prompt]}]
+  (let [r (edit/apply-replace! @session ns-sym nm new-source :prompt prompt)]
+    (if (:error r)
+      r
+      (let [_        (reset! session (:system r))
+            _        (persist-last! session)          ; the :replace delta
+            affected (affected-tests session ns-sym nm)
+            summary  (run-verification! session ns-sym affected)]
+        (swap! session update :store store/record-verification ns-sym summary)
+        (persist-last! session)                       ; the :verify delta
+        {:delta    (:delta r)
+         :warnings (:warnings r)
+         :test     summary
+         :affected (or affected :all)}))))
+
+(defn test-run!
+  "Traced, diagnosed run of `ns-sym`'s tests; refreshes the test→form map and
+  records the result (C4)."
+  [session ns-sym]
+  (let [summary (diagnosed-run! session ns-sym nil)]
+    (swap! session update :store store/record-verification ns-sym summary)
+    (persist-last! session)
+    summary))
 
 (defn build!
   "C1/C6 explicit build: materialize every namespace's current source to real

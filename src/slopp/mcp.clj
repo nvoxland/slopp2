@@ -70,7 +70,7 @@
       "query_eval"        (text (api/query-eval session (:code a)))
       "edit_replace_form" (text (-> (api/edit-replace! session (sym :ns) (sym :name)
                                                        (:source a) :prompt (:prompt a))
-                                    (select-keys [:error :warnings :test :delta])))
+                                    (select-keys [:error :warnings :test :affected :delta])))
       "test_run"          (text (api/test-run! session (sym :ns)))
       "restart"           (do (api/restart! session) (text "restarted"))
       "build"             (text (str "built at " (api/build! session (:dir a))))

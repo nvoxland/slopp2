@@ -37,8 +37,19 @@
           (recur))
         (throw (ex-info "owned image ended before reporting a port" {}))))))
 
+(declare eval!)
+
+(defn- inject-rt!
+  "Load slopp's runtime support (slopp.rt — traced test execution) into the
+  image, then return to `user`. Every owned image carries it."
+  [handle]
+  (eval! handle (slurp (io/resource "slopp/rt.clj")))
+  (eval! handle "(in-ns 'user)")
+  handle)
+
 (defn start!
-  "Launch a fresh owned image; returns a handle for eval!/restart!/stop!."
+  "Launch a fresh owned image (with slopp.rt support loaded); returns a handle
+  for eval!/restart!/stop!."
   ([] (start! {}))
   ([{:keys [cmd dir timeout-ms] :or {timeout-ms 60000}}]
    (let [cmd (or cmd (default-cmd))
@@ -52,8 +63,8 @@
          conn (nrepl/connect :port port)
          client (nrepl/client conn 30000)
          session (nrepl/new-session client)]
-     {:process proc :port port :conn conn :client client :session session
-      :reader rdr :dir dir})))
+     (inject-rt! {:process proc :port port :conn conn :client client
+                  :session session :reader rdr :dir dir}))))
 
 (defn eval!
   "Eval `code` in the image; returns a vector of returned values, read as data

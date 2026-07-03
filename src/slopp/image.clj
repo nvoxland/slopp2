@@ -16,3 +16,15 @@
   ({:test :pass :fail :error :type})."
   [handle ns-sym]
   (first (repl/eval! handle (format "(clojure.test/run-tests '%s)" ns-sym))))
+
+(defn traced-test-run
+  "Run `test-ns`'s tests in the image with form-tracing (slopp.rt): every store
+  namespace's fn vars are observed, so the result maps each test to the forms it
+  exercised. `only` (a coll of plain test names) restricts which tests run.
+  Returns {:summary {...} :trace {test-sym #{form-sym ...}}}."
+  [handle store test-ns & {:keys [only]}]
+  (first (repl/eval! handle
+                     (format "(slopp.rt/traced-run '%s '%s '%s)"
+                             test-ns
+                             (vec (keys (:namespaces store)))
+                             (pr-str (some-> only vec))))))

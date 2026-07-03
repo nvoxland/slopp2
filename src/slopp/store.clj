@@ -23,7 +23,7 @@
 (def ^:private def-heads
   "Head symbols whose second element names the form."
   '#{def defn defn- defmacro defmulti defmethod defrecord deftype
-     defprotocol defonce ns})
+     defprotocol defonce deftest ns})
 
 (defn form-symbol
   "The symbol a top-level form defines, or nil (anonymous/effectful top-levels)."
