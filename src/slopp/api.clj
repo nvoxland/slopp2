@@ -26,7 +26,7 @@
             [slopp.db :as db]))
 
 (declare run-verification! forms-changed-since query-outline
-         hot-load-all! fresh-image!)
+         hot-load-all! fresh-image! reap-idle-images!)
 
 (defn- start-spare!
   "Kick off a background-warming spare image (D5 warm spare) if enabled."
@@ -39,15 +39,26 @@
   when `:dir` is given and it has history, empty otherwise. `:warm-spare? true`
   keeps a spare image warming in the background so restarts are near-instant."
   ([] (open! {}))
-  ([{:keys [dir warm-spare?]}]
+  ([{:keys [dir warm-spare? branch-image-ttl-ms]}]
    (let [conn    (when dir (db/open! dir))
          store   (or (some-> conn db/load-store) (store/empty-store))
          image   (repl/start!)
+         ttl     (or branch-image-ttl-ms 600000)
          session (atom {:store store :image image :db conn
                         :persist-agent (agent nil)
                         :dir dir :branch "main" :lines {}
+                        :branch-image-ttl-ms ttl
                         :warm-spare? (boolean warm-spare?)})]
      (start-spare! session)
+     ;; m4: parked branch images retire after sitting idle for the TTL
+     (let [t      (java.util.Timer. "slopp-branch-reaper" true)
+           period (long (max 1000 (quot ttl 3)))]
+       (.schedule t
+                  (proxy [java.util.TimerTask] []
+                    (run [] (try (reap-idle-images! session)
+                                 (catch Throwable _))))
+                  period period)
+       (swap! session assoc :reaper t))
      (doseq [ns-sym (store/ns-dependency-order store)]     ; X3: deps first
        (when-let [err (image/load-ns! image store ns-sym)]
          (throw (ex-info (str "image load failed for " ns-sym ": " err) {}))))
@@ -62,8 +73,10 @@
   (when-let [^java.sql.Connection conn (:db @session)]
     (.close conn))
   (doseq [[_ line] (:lines @session)]
+    (when-let [img (:image line)] (repl/stop! img))
     (when-let [^java.sql.Connection c (:conn line)]
       (.close c)))
+  (when-let [^java.util.Timer t (:reaper @session)] (.cancel t))
   nil)
 
 (def ^:dynamic *pre-commit-hook*
@@ -1203,40 +1216,77 @@
                          (assoc :branch nm :db conn))))
             {:branch nm :from branch})))))
 
+(defn- boot-line-image!
+  "A fresh image loaded with `store` (consumes the warm spare when ready).
+  Returns {:image handle} or {:error msg}."
+  [session store]
+  (let [spare (:spare @session)
+        img   (if spare @spare (repl/start!))]
+    (when spare
+      (swap! session assoc :spare nil)
+      (start-spare! session))
+    (if-let [err (some #(image/load-ns! img store %)
+                       (store/ns-dependency-order store))]
+      (do (repl/stop! img)
+          {:error (str "branch image failed to load: " err)})
+      {:image img})))
+
 (defn branch-switch!
-  "Checkout: swap the session to line `nm` and bring the ONE live image in
-  step (only namespaces whose source differs reload; a removed namespace
-  forces a fresh image). The trace map resets — it described the other line."
+  "Checkout with LINE-OWNED images (m4): the outgoing line PARKS its image
+  intact (its REPL state included — inactive lines are immutable, so a parked
+  image stays in step by construction); the target ADOPTS its parked image if
+  it still has one, else BOOTS a fresh one on demand (the warm spare makes
+  that cheap). Parked images retire after the session's idle TTL. The trace
+  map resets — it described the other line."
   [session nm]
   (let [nm (str nm)]
     (if (= nm (:branch @session))
       {:switched nm :note "already on it"}
       (if-let [target (load-line session nm)]
         (do (when-let [pa (:persist-agent @session)] (await pa))
-            (let [old-store (:store @session)
-                  new-store (:store target)
-                  removed   (remove #(get-in new-store [:namespaces %])
-                                    (keys (:namespaces old-store)))
-                  changed   (vec (filter #(not= (render/render-ns old-store %)
-                                                (render/render-ns new-store %))
-                                         (store/ns-dependency-order new-store)))]
-              (swap! session
-                     (fn [s]
-                       (-> s
-                           (update :lines assoc (:branch s)
-                                   {:store (:store s) :conn (:db s)})
-                           (update :lines dissoc nm)
-                           (assoc :branch nm
-                                  :db (:conn target)
-                                  :store new-store
-                                  :test-map {}))))
-              (if (seq removed)
-                (fresh-image! session)
-                (when (some #(image/load-ns! (:image @session) new-store %)
-                            changed)
-                  (fresh-image! session)))          ; any load error → heal fully
-              {:switched nm :reloaded (if (seq removed) :all changed)}))
+            (let [adopted (:image target)
+                  booted  (when-not adopted
+                            (boot-line-image! session (:store target)))]
+              (if (:error booted)
+                booted
+                (do (swap! session
+                           (fn [s]
+                             (-> s
+                                 (update :lines assoc (:branch s)
+                                         {:store     (:store s)
+                                          :conn      (:db s)
+                                          :image     (:image s)
+                                          :last-used (System/currentTimeMillis)})
+                                 (update :lines dissoc nm)
+                                 (assoc :branch nm
+                                        :db (:conn target)
+                                        :store (:store target)
+                                        :image (or adopted (:image booted))
+                                        :test-map {}))))
+                    (cond-> {:switched nm}
+                      adopted       (assoc :adopted true)
+                      (not adopted) (assoc :booted true))))))
         {:error (str "no branch named " nm)}))))
+
+(defn reap-idle-images!
+  "Stop parked branch images idle past the session TTL (the session's reaper
+  timer calls this periodically; callable directly). Returns {:reaped n}."
+  [session]
+  (let [ttl     (:branch-image-ttl-ms @session 600000)
+        now     (System/currentTimeMillis)
+        victims (volatile! #{})]
+    (swap! session update :lines
+           (fn [lines]
+             (into {}
+                   (map (fn [[nm line]]
+                          (if (and (:image line)
+                                   (> (- now (:last-used line 0)) ttl))
+                            (do (vswap! victims conj (:image line))
+                                [nm (dissoc line :image)])
+                            [nm line])))
+                   lines)))
+    (doseq [img @victims] (repl/stop! img))
+    {:reaped (count @victims)}))
 
 (defn branch-merge!
   "Merge branch `nm` into the CURRENT line (switch to main first to merge
@@ -1271,7 +1321,8 @@
       {:error (str "no branch named " nm)}
 
       :else
-      (do (some-> (get-in lines [nm :conn])
+      (do (some-> (get-in lines [nm :image]) repl/stop!)
+          (some-> (get-in lines [nm :conn])
                   ^java.sql.Connection (.close))
           (swap! session update :lines dissoc nm)
           (when dir (delete-dir! (io/file (line-dir dir nm))))
@@ -1288,15 +1339,16 @@
                       (map #(.getName ^java.io.File %)
                            (filter #(.isDirectory ^java.io.File %)
                                    (.listFiles bdir))))))
-        info    (fn [nm st]
+        info    (fn [nm st line]
                   (cond-> {:name nm}
                     st (assoc :head   (:id (last (store/deltas st)))
-                              :deltas (count (store/deltas st)))))]
+                              :deltas (count (store/deltas st)))
+                    (:image line) (assoc :image :parked)))]
     {:current  branch
      :branches (vec (concat
-                     [(info branch store)]
+                     [(assoc (info branch store nil) :image :live)]
                      (for [[nm line] (sort-by key lines)]
-                       (info nm (:store line)))
+                       (info nm (:store line) line))
                      (for [nm (sort (remove (set (conj (keys lines) branch))
                                             (or on-disk [])))]
                        {:name nm})))}))

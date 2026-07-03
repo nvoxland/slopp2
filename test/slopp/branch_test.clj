@@ -123,3 +123,34 @@
           (finally (api/close! sess))))
       (finally
         (clojure.java.shell/sh "rm" "-rf" dir)))))
+
+(deftest per-branch-images-park-adopt-and-reap          ; m4
+  (let [sess (api/open! {:branch-image-ttl-ms 200})]
+    (try
+      (api/ingest! sess 'br.core seed)
+      (api/branch! sess "feature")
+      (api/edit-replace! sess 'br.core 'f "(defn f [x] (+ x 10))"
+                         :prompt "feature behavior")
+      (api/edit-replace! sess 'br.core 'f-t "(deftest f-t (is (= 11 (f 1))))")
+      (let [feature-port (:port (:image @sess))]
+        (testing "switching away PARKS the branch image; main boots its own"
+          (api/branch-switch! sess "main")
+          (is (not= feature-port (:port (:image @sess))))
+          (is (= [2] (api/query-eval sess "(br.core/f 1)")))
+          (is (some? (get-in @sess [:lines "feature" :image]))))
+        (testing "switching back ADOPTS the parked image — same process"
+          (let [r (api/branch-switch! sess "feature")]
+            (is (:adopted r)))
+          (is (= feature-port (:port (:image @sess))))
+          (is (= [11] (api/query-eval sess "(br.core/f 1)"))))
+        (testing "idle parked images get reaped after the TTL"
+          (api/branch-switch! sess "main")
+          (Thread/sleep 400)                       ; > ttl
+          (api/reap-idle-images! sess)
+          (is (nil? (get-in @sess [:lines "feature" :image])))
+          (testing "...and switching back just boots a fresh one, correct code"
+            (let [r (api/branch-switch! sess "feature")]
+              (is (:booted r))
+              (is (not= feature-port (:port (:image @sess))))
+              (is (= [11] (api/query-eval sess "(br.core/f 1)")))))))
+      (finally (api/close! sess)))))

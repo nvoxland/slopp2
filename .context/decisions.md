@@ -141,6 +141,19 @@ the change here (same commit).
   `:applied`, and BOTH are scoped by `:from` (different sources mint
   colliding delta AND form ids). merge-logs takes `:from`.
 
+- **P4-m4 — Line-owned images: park / adopt / reap (user-proposed).** Each
+  branch line owns its image. Switching away PARKS the outgoing line's image
+  intact (REPL state included — safe because inactive lines are immutable,
+  so a parked image stays in step with its parked store by construction);
+  switching back ADOPTS it (instant, same process); a line with no image
+  BOOTS one on demand (warm spare applies). Parked images retire after
+  `:branch-image-ttl-ms` idle (default 10 min; per-session daemon Timer
+  calls `reap-idle-images!`, also callable directly); `branch_delete` and
+  `close!` stop them outright. This replaced m3's diff-reload checkout
+  wholesale — images are never mutated to match a line, they belong to one.
+  P1 economics respected: JVMs are spun up on demand and reaped, not held
+  per branch forever.
+
 ## H — host
 
 - **H1 — slopp itself is Clojure/JVM** (same runtime as image + tooling; no
