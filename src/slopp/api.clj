@@ -45,6 +45,7 @@
          image   (repl/start!)
          ttl     (or branch-image-ttl-ms 600000)
          session (atom {:store store :image image :db conn
+                        :data-version (some-> conn db/data-version)
                         :dir dir :branch "main" :lines {}
                         :branch-image-ttl-ms ttl
                         :warm-spare? (boolean warm-spare?)})]
@@ -122,6 +123,44 @@
                       (count (store/deltas (:store s))))
                  (assoc s :store fresh)
                  s))))))
+
+(defn sync-with-journal!
+  "m5b: absorb commits made by OTHER servers sharing this store dir. Cheap
+  when nothing changed (one PRAGMA read). On foreign commits: refresh the
+  cached store from the journal, reload every namespace whose source changed
+  into the LOCAL image, and drop trace entries touching the changed
+  namespaces (conservative — narrowing rebuilds). Returns {:synced n-nses}
+  or nil when already current. The MCP dispatch calls this before every
+  tool, so servers converge continuously."
+  [session]
+  (when-let [conn (:db @session)]
+    (let [v (db/data-version conn)]
+      (when (not= v (:data-version @session))
+        (let [old (:store @session)]
+          (refresh-cache! session)
+          (swap! session assoc :data-version v)
+          (let [new (:store @session)]
+            (if (identical? old new)
+              {:synced 0}
+              (let [changed (filterv #(not= (render/render-ns old %)
+                                            (render/render-ns new %))
+                                     (store/ns-dependency-order new))
+                    stale   (into #{}
+                                  (mapcat (fn [n]
+                                            (map #(symbol (str n)
+                                                          (str (or (:name %) (:id %))))
+                                                 (store/forms new n))))
+                                  changed)]
+                (doseq [n changed]
+                  (image/load-ns! (:image @session) new n))
+                (swap! session update :test-map
+                       (fn [tm]
+                         (into {}
+                               (remove (fn [[t forms]]
+                                         (or (contains? stale t)
+                                             (seq (set/intersection forms stale)))))
+                               tm)))
+                {:synced (count changed)}))))))))
 
 (defn- commit-appended!
   "Commit a pure APPEND `f` (store → store', deltas only unless `nses`),

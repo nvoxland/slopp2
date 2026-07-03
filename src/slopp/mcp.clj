@@ -304,6 +304,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
         (:existing-warnings r) (assoc :existing-warnings (:existing-warnings r))))))
 
 (defn- call-tool [session {:keys [name arguments]}]
+  (api/sync-with-journal! session)      ; m5b: absorb other servers' commits
   (let [a   arguments
         sym (fn [k]
               (if-let [v (get a k)]

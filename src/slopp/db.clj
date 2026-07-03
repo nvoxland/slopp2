@@ -72,6 +72,13 @@
                         (str (:next-id store))]))
    nil))
 
+(defn data-version
+  "SQLite's cheap foreign-commit detector: this value changes when ANOTHER
+  connection (thread or process) has committed to the database since we last
+  looked — our own writes through this connection don't bump it."
+  [conn]
+  (:data_version (jdbc/execute-one! conn ["PRAGMA data_version"])))
+
 (defn append!
   "Phase-a storage inversion: conditionally append `new-deltas` (+ the full
   element rows of `nses`, + the id counter) in ONE transaction, iff the
