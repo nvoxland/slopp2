@@ -232,10 +232,16 @@
                                     (summarize (:verbose a))))
       "edit_group"        (text (-> (api/edit-group!
                                      session
-                                     (mapv (fn [s] (cond-> {:action (keyword (:action s))
-                                                            :ns (symbol (:ns s))}
-                                                     (:name s)   (assoc :name (symbol (:name s)))
-                                                     (:source s) (assoc :source (:source s))))
+                                     (mapv (fn [s]
+                                             (let [action (or (:action s) (:op s))] ; :op guessed in evals
+                                               (when-not (contains? #{"replace" "add" "delete"} action)
+                                                 (throw (ex-info (str "edit_group step needs :action of replace|add|delete (got "
+                                                                      (pr-str action) "); keys: :action :ns :name :source")
+                                                                 {})))
+                                               (cond-> {:action (keyword action)
+                                                        :ns (symbol (:ns s))}
+                                                 (:name s)   (assoc :name (symbol (:name s)))
+                                                 (:source s) (assoc :source (:source s)))))
                                            (:steps a))
                                      :prompt (:prompt a))
                                     (select-keys [:error :step :group :warnings :existing-warnings
@@ -257,11 +263,14 @@
       "edit_move"         (text (api/move-form! session (sym :ns) (sym :name)
                                                 :before (sym :before)
                                                 :prompt (:prompt a)))
-      "edit_extract"      (text (-> (api/extract! session (sym :ns) (sym :from)
-                                                  (sym :name) (:form a)
-                                                  :prompt (:prompt a))
-                                    (select-keys [:error :extracted :group :test :affected])
-                                    (summarize (:verbose a))))
+      "edit_extract"      (let [subform (or (:form a) (:source a) (:subform a))]
+                            (when-not subform
+                              (throw (ex-info "edit_extract needs :form (the exact subform source; aliases :source/:subform accepted)" {})))
+                            (text (-> (api/extract! session (sym :ns) (sym :from)
+                                                    (sym :name) subform
+                                                    :prompt (:prompt a))
+                                      (select-keys [:error :extracted :group :test :affected])
+                                      (summarize (:verbose a)))))
       "checkpoint"        (text (api/checkpoint! session :label (:label a)))
       "test_run"          (text (api/test-run! session (sym :ns)
                                                :only (some->> (:only a) (mapv symbol))))

@@ -23,13 +23,24 @@
      clojure.core/assoc! clojure.core/dissoc! clojure.core/pop!
      clojure.core/spit clojure.core/delete-file})
 
+(def ^:private analysis-cache
+  "source-string -> :analysis memo (bounded). Every write triggers several
+  analyses of identical rendered source (pre/post warnings, affected lookups);
+  eval round 2 showed the re-runs dominating per-write wall time."
+  (atom {}))
+
 (defn analyze
   "Run clj-kondo over `source` (fed via stdin, no disk); return its `:analysis`
-  ({:var-definitions :var-usages :namespace-definitions :namespace-usages})."
+  ({:var-definitions :var-usages :namespace-definitions :namespace-usages}).
+  Memoized on the source string (bounded)."
   [source]
-  (:analysis
-   (with-in-str source
-     (kondo/run! {:lint ["-"] :config {:output {:analysis true}}}))))
+  (or (get @analysis-cache source)
+      (let [an (:analysis
+                (with-in-str source
+                  (kondo/run! {:lint ["-"] :config {:output {:analysis true}}})))]
+        (swap! analysis-cache
+               (fn [c] (assoc (if (>= (count c) 32) {} c) source an)))
+        an)))
 
 (defn- node
   "Fully-qualified node key for a var: ns/name."

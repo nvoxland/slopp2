@@ -63,6 +63,26 @@
                      (call sess "query_outline" {}))))
       (finally (api/close! sess)))))
 
+(deftest write-op-arg-forgiveness                      ; eval round 2
+  (let [sess (api/open!)]
+    (try
+      (call sess "ingest" {:ns "wa" :source "(ns wa)\n(defn f [x] (+ x x 1))\n(defn g [x] (f x))\n"})
+      (testing "edit_group accepts :op for :action; bad actions get a real message"
+        (let [r (edn/read-string (call sess "edit_group"
+                                       {:steps [{:op "replace" :ns "wa" :name "g"
+                                                 :source "(defn g [x] (f (f x)))"}]}))]
+          (is (nil? (:error r))))
+        (is (re-find #"replace\|add\|delete"
+                     (call sess "edit_group" {:steps [{:ns "wa" :name "g"}]}))))
+      (testing "edit_extract accepts :source for :form; missing gets a real message"
+        (let [r (edn/read-string (call sess "edit_extract"
+                                       {:ns "wa" :from "f" :name "doubled"
+                                        :source "(+ x x 1)"}))]
+          (is (nil? (:error r))))
+        (is (re-find #"needs :form" (call sess "edit_extract"
+                                          {:ns "wa" :from "f" :name "z"}))))
+      (finally (api/close! sess)))))
+
 (deftest green-responses-are-terse                     ; B1
   (let [sess (api/open!)]
     (try

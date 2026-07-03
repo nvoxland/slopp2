@@ -42,7 +42,13 @@ Server: `clojure -M -m slopp.mcp` (stdio) from the slopp repo.
 | Change SEVERAL forms for one reason | `edit_group` — atomic, verified once; sequencing single edits burns a false red + a restart between them |
 | Rename anything | `edit_rename` — rewrites the def + every reference across namespaces, shadow-safe; NEVER rename by editing call sites yourself |
 | Reorder forms | `edit_move` (form X to just before form Y) |
-| Extract a helper | `edit_extract` — give the exact subform source + a name; params (the free locals) are computed for you, placement and the call-site rewrite are handled, behavior is re-verified |
+| Extract a helper | `edit_extract` — args `{ns, from, form, name}` where `form` is the exact subform source; params (the free locals) are computed for you, placement and the call-site rewrite are handled, behavior is re-verified |
+
+**Batch related changes.** Verification runs per WRITE — so a feature that
+touches several forms should be ONE `edit_group` (even mixing adds and
+replaces), not a stream of single writes. Fewer, larger intents are both
+faster and cleaner history. And you almost never need `test_run` after edits:
+every write's response already contains the verification result.
 | Delete | `edit_delete_form` |
 
 **Every write must compile.** A form referencing something undefined is
