@@ -119,3 +119,27 @@ Read:
 - Payload inputs: slopp lower in 5 of 6 runs (form-writes vs whole-file
   rewrites). Payload outputs remain higher (structured verification vs silent
   green) -- by design, and B1 keeps quiet greens small.
+
+## Symmetric eval, wave 4: calculator RERUN post-fixes (@ 31a002b)
+
+Same app as wave 1, all fixes in (compile-gate, rename aliases, TDD guidance).
+All green.
+
+| model | wave 1 (pre-fix) | wave 4 (post-fix) | Go baseline |
+|---|---|---|---|
+| haiku  | 41.9k tok / 460s / 93 calls | 31.7k / 241s / 29 | 19.6k / 97s / 14 |
+| sonnet | 51.0k / 423s / 43 | 34.6k / 175s / 24 | 27.8k / 127s / 23 |
+| opus   | 23.5k / 131s / 13 | 32.3k / 264s / 25 | 18.7k / 85s / 11 |
+
+- The fixes bought haiku -24% tokens / -48% wall (calls 93->29) and sonnet
+  -32% / -59%. Gaps to Go: haiku +114%->+62%, sonnet +84%->+25%.
+- Opus regressed vs its own exceptionally clean wave-1 run (schema probing
+  this time) -- it never hit S1/S2, so the fixes had nothing to fix, and
+  single-run variance (est. +/-40%) dominates clean runs. n=1 rows are
+  directional, not precise; treat trends across models/apps, not cells.
+- Standing overhead vs files at this project size: SKILL.md read + curl
+  envelope (~2-3k tokens) + slopp's richer verification outputs. The bet
+  remains that these amortize/win on larger, longer-lived codebases where
+  orientation, narrowing, rename-safety, and provenance compound -- tiny
+  greenfield apps are the LEAST favorable terrain for slopp, and it already
+  reaches parity-to-modest-overhead there.
