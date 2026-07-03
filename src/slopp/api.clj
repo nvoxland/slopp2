@@ -128,10 +128,38 @@
   (let [st (:store @session)
         id (:id (store/form-named st ns-sym nm))]
     (when id
-      (filter (fn [d]
-                (or (= id (:form-id d))
-                    (some #{id} (:form-ids d))))
-              (store/deltas st)))))
+      (->> (store/deltas st)
+           (filter (fn [d]
+                     (or (= id (:form-id d))
+                         (some #{id} (:form-ids d)))))
+           ;; lean: bulk content lives in query-form-history, not here
+           (mapv #(dissoc % :sources :changeset :result))))))
+
+(defn query-form-history
+  "Every content version of `nm`'s form, oldest first, with the intent that
+  produced it: [{:delta :op :prompt :source}]. The semantic×history core."
+  [session ns-sym nm]
+  (let [st (:store @session)
+        id (:id (store/form-named st ns-sym nm))]
+    (when id
+      (vec (for [d     (store/deltas st)
+                 :let  [src (get-in d [:sources id])]
+                 :when src]
+             {:delta (:id d) :op (:op d) :prompt (:prompt d) :source src})))))
+
+(defn query-history
+  "The delta log as a story, newest first. Filters: `:ns`, `:contains`
+  (substring of prompt/label), `:limit` (default 20)."
+  [session & {:keys [ns contains limit] :or {limit 20}}]
+  (->> (store/deltas (:store @session))
+       reverse
+       (filter #(or (nil? ns) (= ns (:ns %))))
+       (filter #(or (nil? contains)
+                    (some (fn [s] (and s (clojure.string/includes? (str s) contains)))
+                          [(:prompt %) (:label %)])))
+       (take limit)
+       (mapv #(select-keys % [:id :op :ns :prompt :label :group
+                              :form-id :form-ids :old :new :before]))))
 
 (defn query-eval
   "Observe-only eval against the live image (the oracle): call anything —

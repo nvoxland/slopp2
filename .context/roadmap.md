@@ -1,5 +1,14 @@
 # Roadmap (beyond dogfood findings)
 
+**Status 2026-07-02:** #1 ✅ (plugins for Claude Code + Codex, HTTP transport,
+portability) · #2 ✅ (outline/namespaces) · #3 ✅ (query_observe +
+query_macroexpand) · #4 partially ✅ (extract shipped alongside rename/move;
+inline/change-signature + the published CODESTRUCT-style eval remain) ·
+#5, #6 open — the semantic×history depth is the next differentiator to build.
+The symmetric-eval harness (benchmarks/results.md) is the standing measure;
+next eval round should be a LARGER modify-and-extend task, slopp's favorable
+terrain.
+
 The functional goal: an agent-native codebase that is *measurably* better to
 author in than text files — fewer tokens to orient, faster verified loops,
 trustworthy history. Ordered by leverage:

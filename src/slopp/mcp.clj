@@ -68,6 +68,16 @@
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}}
                   :required ["ns" "name"]}}
+   {:name "query_history"
+    :description "The change history as a story, newest first (op, prompt, label). Filters: ns, contains (prompt/label substring), limit."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :contains {:type "string"}
+                               :limit {:type "integer"}}}}
+   {:name "query_form_history"
+    :description "Every content version of a form, oldest first, with the prompt that produced it."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :name {:type "string"}}
+                  :required ["ns" "name"]}}
    {:name "query_eval"
     :description "Read-only eval against the live image (the oracle); never edits code."
     :inputSchema {:type "object" :properties {:code {:type "string"}} :required ["code"]}}
@@ -196,6 +206,11 @@
       "query_symbol"      (text (api/query-symbol session (sym :ns) (sym :name)))
       "query_references"  (text (vec (api/query-references session (sym :ns) (sym :name))))
       "query_lineage"     (text (vec (api/query-lineage session (sym :ns) (sym :name))))
+      "query_history"     (text (api/query-history session
+                                                   :ns (some-> (:ns a) symbol)
+                                                   :contains (:contains a)
+                                                   :limit (or (:limit a) 20)))
+      "query_form_history" (text (api/query-form-history session (sym :ns) (sym :name)))
       "query_eval"        (text (api/query-eval session (:code a)))
       "query_observe"     (text (api/query-observe session (sym :ns) (sym :name)
                                                    (:code a)

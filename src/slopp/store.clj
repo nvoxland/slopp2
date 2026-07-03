@@ -59,7 +59,14 @@
               (assoc-in [:namespaces ns-sym :elements] elements)
               (update :deltas conj
                       {:id did :parent nil :op :ingest :ns ns-sym
-                       :form-ids (into [] (keep :id) elements)})))))))
+                       :form-ids (into [] (keep :id) elements)
+                       ;; per-version content (C3/C4): history must be
+                       ;; reconstructible from the log alone
+                       :sources  (into {}
+                                       (keep (fn [e]
+                                               (when (:id e)
+                                                 [(:id e) (n/string (:node e))])))
+                                       elements)})))))))
 
 (defn elements
   "All elements of `ns-sym` in order (forms + separators)."
@@ -100,7 +107,8 @@
             new-elem (assoc elem :node node :name (form-symbol node))
             [did store] (gen-id store "d")
             delta    (cond-> {:id did :parent (:id (last (:deltas store)))
-                              :op op :ns ns-sym :form-id (:id elem) :prompt prompt}
+                              :op op :ns ns-sym :form-id (:id elem) :prompt prompt
+                              :sources {(:id elem) (n/string node)}}
                        group (assoc :group group))]
         [(-> store
              (assoc-in [:namespaces ns-sym :elements] (assoc elems idx new-elem))
@@ -123,7 +131,8 @@
                                           :name (form-symbol node) :node node}
                                          {:kind :sep :node (n/newlines 1)}))
           delta        (cond-> {:id did :parent (:id (last (:deltas store)))
-                                :op :add :ns ns-sym :form-id fid :prompt prompt}
+                                :op :add :ns ns-sym :form-id fid :prompt prompt
+                                :sources {fid (n/string node)}}
                          group (assoc :group group))]
       [(-> store'
            (assoc-in [:namespaces ns-sym :elements] new-elems)
@@ -148,6 +157,7 @@
             [did store'] (gen-id store "d")
             delta        (cond-> {:id did :parent (:id (last (:deltas store)))
                                   :op :delete :ns ns-sym :form-id fid :name nm
+                                  :removed-source (n/string (:node (nth elems idx)))
                                   :prompt prompt}
                            group (assoc :group group))]
         [(-> store'
@@ -206,6 +216,9 @@
         delta (merge {:id did :parent (:id (last (:deltas store)))
                       :op op :ns ns-sym
                       :form-ids (vec (sort (keys changeset)))
+                      :sources  (into {} (map (fn [[fid node]]
+                                                [fid (n/string node)]))
+                                      changeset)
                       :prompt prompt}
                      extra)
         store' (reduce-kv
