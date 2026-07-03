@@ -51,6 +51,27 @@
     (catch Exception e
       {:error (str "unparseable source (unbalanced?): " (ex-message e))})))
 
+(def ^:private observe-banned
+  "query-eval may observe anything (including calling effectful fns) but never
+  (re)define code — that would bypass the delta/provenance pipeline (T5)."
+  '#{def defn defn- defmacro defonce deftype defrecord defprotocol defmulti
+     defmethod in-ns ns ns-unmap ns-unalias alter-var-root intern remove-ns
+     create-ns load-file load-string})
+
+(defn observe-gate
+  "nil if `code` is observation-only; an error string if it (re)defines code
+  or doesn't parse."
+  [code]
+  (try
+    (let [syms (mapcat all-symbols
+                       (filter n/sexpr-able?
+                               (n/children (p/parse-string-all code))))]
+      (when-let [bad (first (filter observe-banned syms))]
+        (str "query-eval is observe-only; `" bad
+             "` (re)defines code — use the edit tools")))
+    (catch Exception e
+      (str "unparseable code: " (ex-message e)))))
+
 (defn add-require-source
   "F5: structurally add one require clause (`require-str`, e.g.
   \"[clojure.string :as str]\") to an ns form's source. Returns {:src new-src}

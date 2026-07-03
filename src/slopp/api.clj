@@ -62,14 +62,24 @@
       (db/persist! db store (last (store/deltas store))))))
 
 (defn ingest!
-  "Ingest `source` as `ns-sym` and load it into the live image. Returns a tidy
-  map ({:ns :forms}), or {:error msg} on unparseable source (F3/F8)."
+  "Ingest `source` as `ns-sym`: load it into the live image FIRST, and only
+  commit to the store when the load succeeds — a failed load (bad require,
+  compile error) returns {:error msg} with nothing committed, never a silent
+  store/image drift (T4). Returns {:ns :forms} on success."
   [session ns-sym source]
   (try
-    (swap! session update :store store/ingest ns-sym source)
-    (persist-last! session)
-    (image/load-ns! (:image @session) (:store @session) ns-sym)
-    {:ns ns-sym :forms (count (store/forms (:store @session) ns-sym))}
+    (let [candidate (store/ingest (:store @session) ns-sym source)
+          res (repl/load-checked! (:image @session)
+                                  (render/render-ns candidate ns-sym)
+                                  (render/ns-path ns-sym))]
+      (if (:err res)
+        {:error (str "namespace failed to load: " (:err res))}
+        (do (swap! session assoc :store candidate)
+            (persist-last! session)
+            (repl/eval! (:image @session)
+                        (format "(dosync (commute (deref #'clojure.core/*loaded-libs*) conj '%s))"
+                                ns-sym))
+            {:ns ns-sym :forms (count (store/forms candidate ns-sym))})))
     (catch Exception e
       {:error (str "unparseable source (unbalanced?): " (ex-message e))})))
 
@@ -123,9 +133,13 @@
               (store/deltas st)))))
 
 (defn query-eval
-  "Read-only eval against the live image (the oracle). Does NOT change code."
+  "Observe-only eval against the live image (the oracle): call anything —
+  including effectful fns — but (re)defining code is rejected (T5); writes go
+  through the edit tools so provenance stays airtight."
   [session code]
-  (repl/eval! (:image @session) code))
+  (if-let [err (edit/observe-gate code)]
+    {:error err}
+    (repl/eval! (:image @session) code)))
 
 (defn query-namespaces
   "What exists? Every store namespace with its form count (orientation, T2)."
@@ -242,21 +256,25 @@
   exercise this form (D1), cross-checked on a fresh image if red (D5) — and
   record the outcome as provenance (C4)."
   [session ns-sym nm new-source & {:keys [prompt]}]
-  (let [r (edit/apply-replace! @session ns-sym nm new-source :prompt prompt)]
+  (let [pre-warned (set (map :var (edit/ns-warnings (:store @session) ns-sym)))
+        r (edit/apply-replace! @session ns-sym nm new-source :prompt prompt)]
     (if (:error r)
       r
       (let [_        (reset! session (:system r))
             _        (persist-last! session)          ; the :replace delta
             affected (affected-tests session ns-sym nm)
             untested (and (nil? affected) (seq (:test-map @session)))
-            summary  (run-verification! session ns-sym affected)]
+            summary  (run-verification! session ns-sym affected)
+            existing (count (filter (comp pre-warned :var) (:warnings r)))]
         (swap! session update :store store/record-verification ns-sym summary)
         (persist-last! session)                       ; the :verify delta
         (cond-> {:delta    (:delta r)
-                 :warnings (:warnings r)
+                 ;; T3: report only NEW violations; pre-existing ones as a count
+                 :warnings (vec (remove (comp pre-warned :var) (:warnings r)))
                  :test     summary
                  :affected (or affected :all)}
-          untested (assoc :untested true))))))
+          (pos? existing) (assoc :existing-warnings existing)
+          untested        (assoc :untested true))))))
 
 (defn add-form!
   "Add a new top-level form to `ns-sym` (O1 base write): dialect gate, `:add`
@@ -272,20 +290,25 @@
       {:error (str nm " already exists in " ns-sym)}
 
       :else
-      (if-let [[st' delta] (store/append-form (:store @session) ns-sym node
-                                              :prompt prompt)]
-        (do (swap! session assoc :store st')
-            (persist-last! session)
-            (edit/hot-load-form! (:image @session) st' (:form-id delta))
-            (let [affected (when nm (affected-tests session ns-sym nm))
-                  summary  (run-verification! session ns-sym affected)]
-              (swap! session update :store store/record-verification ns-sym summary)
+      (let [pre-warned (set (map :var (edit/ns-warnings (:store @session) ns-sym)))]
+        (if-let [[st' delta] (store/append-form (:store @session) ns-sym node
+                                                :prompt prompt)]
+          (do (swap! session assoc :store st')
               (persist-last! session)
-              {:delta    delta
-               :warnings (edit/ns-warnings (:store @session) ns-sym)
-               :test     summary
-               :affected (or affected :all)}))
-        {:error (str "no namespace " ns-sym " (ingest it first)")}))))
+              (edit/hot-load-form! (:image @session) st' (:form-id delta))
+              (let [affected (when nm (affected-tests session ns-sym nm))
+                    summary  (run-verification! session ns-sym affected)
+                    all-w    (edit/ns-warnings (:store @session) ns-sym)
+                    existing (count (filter (comp pre-warned :var) all-w))]
+                (swap! session update :store store/record-verification ns-sym summary)
+                (persist-last! session)
+                (cond-> {:delta    delta
+                         ;; T3: only NEW violations; pre-existing ones as a count
+                         :warnings (vec (remove (comp pre-warned :var) all-w))
+                         :test     summary
+                         :affected (or affected :all)}
+                  (pos? existing) (assoc :existing-warnings existing))))
+          {:error (str "no namespace " ns-sym " (ingest it first)")})))))
 
 (defn delete-form!
   "Delete the form named `nm` from `ns-sym`: `:delete` delta, `ns-unmap` in the
@@ -344,7 +367,11 @@
   [session steps & {:keys [prompt]}]
   (if (empty? steps)
     {:error "edit-group needs at least one step"}
-    (let [[gid st0] (store/alloc-id (:store @session) "g")]
+    (let [pre-warned (into #{}
+                           (mapcat (fn [ns-sym]
+                                     (map :var (edit/ns-warnings (:store @session) ns-sym))))
+                           (distinct (map :ns steps)))
+          [gid st0] (store/alloc-id (:store @session) "g")]
       (loop [st st0, remaining steps, deltas [], hots [], i 0]
         (if-let [step (first remaining)]
           (let [r (apply-group-step st gid prompt step)]
@@ -381,13 +408,15 @@
                                             (when (seq affected) affected))]
             (swap! session update :store store/record-verification main-ns summary)
             (persist-last! session)
-            {:group    gid
-             :deltas   deltas
-             :warnings (->> (map :ns steps) distinct
-                            (mapcat #(edit/ns-warnings (:store @session) %))
-                            vec)
-             :test     summary
-             :affected (or (not-empty affected) :all)}))))))
+            (let [all-w    (->> (map :ns steps) distinct
+                                (mapcat #(edit/ns-warnings (:store @session) %)))
+                  existing (count (filter (comp pre-warned :var) all-w))]
+              (cond-> {:group    gid
+                       :deltas   deltas
+                       :warnings (vec (remove (comp pre-warned :var) all-w))
+                       :test     summary
+                       :affected (or (not-empty affected) :all)}
+                (pos? existing) (assoc :existing-warnings existing)))))))))
 
 (defn add-require!
   "F5: add one require clause to `ns-sym`'s ns form — structural edit through

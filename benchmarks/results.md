@@ -50,3 +50,6 @@ wordstats 427/542 payload tokens in/out):
 - **Models:** opus was the most efficient (fewest tools, ~18.6k tokens);
   sonnet the most thorough (red-first TDD, most verbose); haiku cheapest
   per token but flailed hardest (wordstats: 24 tool calls).
+| 2026-07-02 | 520b41c | calculator | 2 | 11 | 1305 | 725 | 590 |
+| 2026-07-02 | 520b41c | inventory | 1 | 7 | 84 | 345 | 311 |
+| 2026-07-02 | 520b41c | wordstats | 1 | 8 | 1236 | 427 | 370 |

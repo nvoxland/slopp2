@@ -79,13 +79,21 @@ Details: `projects/calculator/REPORT.md` (untracked) and `.context/dogfooding.md
 
 ## T — tasker user-test findings (round 2, through the MCP wire)
 
-T1 ✅ deftests exempt from the `!` rule (were nagged "store-t → store-t!") ·
-T2 ✅ orientation queries (`query_namespaces`, `query_outline`) — the gap cost
-~521 tokens + prior ns-name knowledge · T3 (open) warnings-list noise (full ns
-violation list repeats on every write) · T4 (open) ns creation-order
-sensitivity (require of a not-yet-created store ns fails; create dependencies
-first) · T5 (open) `query_eval` can mutate — observe-only is convention, not
-enforced; a read-gate would make provenance airtight · (obs.) hot-editing a
+T1 ✅ deftests exempt from the `!` rule · T2 ✅ orientation queries
+(`query_namespaces`, `query_outline`) · T3 ✅ edits report only NEW `!`
+violations + `:existing-warnings` count · T4 ✅ ingest/ns-create load the image
+FIRST and commit only on success — a failed require/compile returns `{:error}`
+with no store/image drift · T5 ✅ `query_eval` is observe-only by construction
+(`edit/observe-gate` rejects def/in-ns/ns-unmap/alter-var-root/...; calling
+effectful fns remains allowed — that's observation) · (obs.) hot-editing a
 `(def x (atom ...))` form resets its in-image state — tests re-seed so verify
 is unaffected; D5's defonce-preservation opt covers it if it ever matters.
 Details: `projects/tasker/REPORT.md` (untracked).
+
+## B — benchmark/baseline findings
+
+B1 ✅ **terse green responses** (from the Go-baseline comparison): MCP write
+results compress to `{:ok true :delta id :tests {:ran n :pass n} :affected n}`
+when green-and-quiet; full detail on :error / red / NEW warnings / :untested /
+explicit `:verbose true`. Measured: output tokens −32–38% across all three
+benchmark apps (calculator 906→590, inventory 502→311, wordstats 542→370).

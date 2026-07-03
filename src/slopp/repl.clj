@@ -87,6 +87,25 @@
        (keep :value)
        (mapv (fn [v] (try (read-string v) (catch Exception _ v))))))
 
+(defn load-checked!
+  "Like `load!` but surfaces evaluation failures instead of silently dropping
+  them (T4 — a failed load must never leave the store and image out of step).
+  Returns {:values [...]} or {:err msg}."
+  [{:keys [client session]} src path]
+  (let [msgs (doall (nrepl/message client
+                                   {:op "load-file" :file src :file-path path
+                                    :file-name (subs path (inc (or (str/last-index-of path "/") -1)))
+                                    :session session}))
+        errs (concat (keep :err msgs)
+                     (mapcat (fn [m]
+                               (when (some #{"eval-error"} (:status m))
+                                 [(or (:ex m) "eval-error")]))
+                             msgs))]
+    (if (seq errs)
+      {:err (str/trim (str/join " " (distinct errs)))}
+      {:values (->> msgs (keep :value)
+                    (mapv (fn [v] (try (read-string v) (catch Exception _ v)))))})))
+
 (defn stop!
   "Destroy the image subprocess and release its connection."
   [{:keys [^java.io.Closeable conn ^Process process]}]

@@ -1,5 +1,6 @@
 (ns slopp.mcp-test
   (:require [clojure.test :refer [deftest is testing]]
+            [clojure.edn :as edn]
             [cheshire.core :as json]
             [slopp.api :as api]
             [slopp.mcp :as mcp]))
@@ -45,4 +46,29 @@
               wire-resp (json/parse-string (json/generate-string resp) true)]
           (is (nil? (:error wire-resp)))
           (is (re-find #"\b6\b" (call sess "query_eval" {:code "(demo/add 2 3)"})))))
+      (finally (api/close! sess)))))
+
+(deftest green-responses-are-terse                     ; B1
+  (let [sess (api/open!)]
+    (try
+      (call sess "ingest" {:ns "b1" :source "(ns b1 (:require [clojure.test :refer [deftest is]]))\n(defn f [x] x)\n(deftest f-t (is (= 1 (f 1))))\n"})
+      (call sess "test_run" {:ns "b1"})
+      (testing "a quiet green edit returns the terse shape"
+        (let [r (edn/read-string (call sess "edit_replace_form"
+                                       {:ns "b1" :name "f"
+                                        :source "(defn f [x] (identity x))"}))]
+          (is (true? (:ok r)))
+          (is (nil? (:failures r)))
+          (is (< (count (pr-str r)) 120) (pr-str r))))
+      (testing ":verbose true forces the full shape"
+        (let [r (edn/read-string (call sess "edit_replace_form"
+                                       {:ns "b1" :name "f"
+                                        :source "(defn f [x] x)" :verbose true}))]
+          (is (map? (:delta r)))
+          (is (map? (:test r)))))
+      (testing "a red edit returns full detail incl. :failures"
+        (let [r (edn/read-string (call sess "edit_replace_form"
+                                       {:ns "b1" :name "f"
+                                        :source "(defn f [x] (inc x))"}))]
+          (is (seq (get-in r [:test :failures])))))
       (finally (api/close! sess)))))

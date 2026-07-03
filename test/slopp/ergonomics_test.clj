@@ -53,3 +53,43 @@
           (api/add-form! sess 'bare.core "(defn u [a b] (cset/union a b))")
           (is (= [#{1 2}] (api/query-eval sess "(bare.core/u #{1} #{2})")))))
       (finally (api/close! sess)))))
+
+(deftest warnings-report-only-whats-new                ; T3
+  (let [sess (api/open!)]
+    (try
+      (api/create-ns! sess 'w.core)
+      (testing "first violation reported in full"
+        (let [r (api/add-form! sess 'w.core "(defn stash [a v] (reset! a v))")]
+          (is (= ['w.core/stash] (mapv :var (:warnings r))))))
+      (testing "an unrelated green write doesn't repeat it — just counts it"
+        (let [r (api/add-form! sess 'w.core "(defn pure-f [x] x)")]
+          (is (empty? (:warnings r)))
+          (is (= 1 (:existing-warnings r)))))
+      (finally (api/close! sess)))))
+
+(deftest failed-namespace-load-is-not-silently-committed   ; T4
+  (let [sess (api/open!)]
+    (try
+      (testing "requiring a not-yet-created store ns fails loudly, nothing committed"
+        (let [r (api/create-ns! sess 'dep.user :requires ["[dep.lib :as lib]"])]
+          (is (:error r))
+          (is (nil? (get-in (:store @sess) [:namespaces 'dep.user])))))
+      (testing "after creating the dependency, it works"
+        (api/create-ns! sess 'dep.lib)
+        (is (nil? (:error (api/create-ns! sess 'dep.user
+                                          :requires ["[dep.lib :as lib]"])))))
+      (finally (api/close! sess)))))
+
+(deftest query-eval-is-observe-only                    ; T5
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'g.core "(ns g.core)\n(defn f [x] x)\n")
+      (testing "definitions and code mutation are rejected — use edit tools"
+        (is (:error (api/query-eval sess "(def sneaky 1)")))
+        (is (:error (api/query-eval sess "(in-ns 'g.core)")))
+        (is (:error (api/query-eval sess "(ns-unmap 'g.core 'f)")))
+        (is (:error (api/query-eval sess "(do (defn g [] 1) (g))"))))
+      (testing "observation — including calling effectful fns — still works"
+        (is (= [3] (api/query-eval sess "(g.core/f 3)")))
+        (is (= [1] (api/query-eval sess "(let [a (atom 0)] (swap! a inc))"))))
+      (finally (api/close! sess)))))

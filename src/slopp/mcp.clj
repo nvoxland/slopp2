@@ -28,7 +28,8 @@
     :description "Add one require clause (e.g. \"[clojure.string :as str]\") to a namespace's ns form (tracked, hot-reloaded)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :require {:type "string"}
-                               :prompt {:type "string"}}
+                               :prompt {:type "string"}
+                               :verbose {:type "boolean"}}
                   :required ["ns" "require"]}}
    {:name "query_namespaces"
     :description "List every namespace in the store with its form count (orient here first)."
@@ -61,19 +62,22 @@
     :description "Replace a whole top-level form (tracked delta, hot-reload, verify)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}
-                               :source {:type "string"} :prompt {:type "string"}}
+                               :source {:type "string"} :prompt {:type "string"}
+                               :verbose {:type "boolean"}}
                   :required ["ns" "name" "source"]}}
    {:name "edit_add_form"
     :description "Add a new top-level form to a namespace (tracked delta, hot-reload, verify)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :source {:type "string"}
-                               :prompt {:type "string"}}
+                               :prompt {:type "string"}
+                               :verbose {:type "boolean"}}
                   :required ["ns" "source"]}}
    {:name "edit_delete_form"
     :description "Delete a top-level form from a namespace (tracked delta, ns-unmap, verify)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}
-                               :prompt {:type "string"}}
+                               :prompt {:type "string"}
+                               :verbose {:type "boolean"}}
                   :required ["ns" "name"]}}
    {:name "edit_group"
     :description "Apply several form writes as ONE atomic intent: all-or-nothing commit, one verification at the end. Use for multi-form refactors."
@@ -85,13 +89,15 @@
                                                             :name {:type "string"}
                                                             :source {:type "string"}}
                                                :required ["action" "ns"]}}
-                               :prompt {:type "string"}}
+                               :prompt {:type "string"}
+                               :verbose {:type "boolean"}}
                   :required ["steps"]}}
    {:name "edit_rename"
     :description "Rename a form and every reference to it, across namespaces (one coordinated delta; shadow-safe)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :old {:type "string"}
-                               :new {:type "string"} :prompt {:type "string"}}
+                               :new {:type "string"} :prompt {:type "string"}
+                               :verbose {:type "boolean"}}
                   :required ["ns" "old" "new"]}}
    {:name "test_run"
     :description "Run a namespace's tests in the live image; record the result."
@@ -106,6 +112,30 @@
 (defn- text [x]
   {:content [{:type "text" :text (if (string? x) x (pr-str x))}]})
 
+(defn- red? [t]
+  (and t (pos? (+ (:fail t 0) (:error t 0)))))
+
+(defn- summarize
+  "B1: a green-and-quiet edit result compresses to a terse shape (the Go
+  baseline showed slopp's verbose green responses were the token loser).
+  Anything noteworthy — :error, red tests, NEW warnings, :untested — or an
+  explicit :verbose returns the full map."
+  [r verbose?]
+  (if (or verbose? (:error r) (:untested r)
+          (seq (:warnings r)) (red? (:test r)))
+    r
+    (let [t (:test r)]
+      (cond-> {:ok true}
+        (:delta r)   (assoc :delta (get-in r [:delta :id]))
+        (:group r)   (assoc :group (:group r))
+        (:deltas r)  (assoc :deltas (count (:deltas r)))
+        (:renamed r) (assoc :renamed (:renamed r))
+        t            (assoc :tests (cond-> {:ran (:test t 0) :pass (:pass t 0)}
+                                     (:staleness-detected t) (assoc :staleness-healed true)))
+        (:affected r) (assoc :affected (let [a (:affected r)]
+                                         (if (= :all a) :all (count a))))
+        (:existing-warnings r) (assoc :existing-warnings (:existing-warnings r))))))
+
 (defn- call-tool [session {:keys [name arguments]}]
   (let [a   arguments
         sym #(symbol (get a %))]
@@ -115,7 +145,9 @@
                                                 :requires (:requires a)))
       "ns_add_require"    (text (-> (api/add-require! session (sym :ns) (:require a)
                                                       :prompt (:prompt a))
-                                    (select-keys [:error :warnings :test :affected :delta])))
+                                    (select-keys [:error :warnings :existing-warnings
+                                                  :test :affected :delta])
+                                    (summarize (:verbose a))))
       "query_namespaces"  (text (api/query-namespaces session))
       "query_outline"     (text (api/query-outline session (sym :ns)))
       "query_source"      (text (api/query-source session (sym :ns)))
@@ -125,13 +157,18 @@
       "query_eval"        (text (api/query-eval session (:code a)))
       "edit_replace_form" (text (-> (api/edit-replace! session (sym :ns) (sym :name)
                                                        (:source a) :prompt (:prompt a))
-                                    (select-keys [:error :warnings :test :affected :delta])))
+                                    (select-keys [:error :warnings :existing-warnings
+                                                  :untested :test :affected :delta])
+                                    (summarize (:verbose a))))
       "edit_add_form"     (text (-> (api/add-form! session (sym :ns) (:source a)
                                                    :prompt (:prompt a))
-                                    (select-keys [:error :warnings :test :affected :delta])))
+                                    (select-keys [:error :warnings :existing-warnings
+                                                  :untested :test :affected :delta])
+                                    (summarize (:verbose a))))
       "edit_delete_form"  (text (-> (api/delete-form! session (sym :ns) (sym :name)
                                                       :prompt (:prompt a))
-                                    (select-keys [:error :test :affected :delta])))
+                                    (select-keys [:error :test :affected :delta])
+                                    (summarize (:verbose a))))
       "edit_group"        (text (-> (api/edit-group!
                                      session
                                      (mapv (fn [s] (cond-> {:action (keyword (:action s))
@@ -140,10 +177,13 @@
                                                      (:source s) (assoc :source (:source s))))
                                            (:steps a))
                                      :prompt (:prompt a))
-                                    (select-keys [:error :step :group :warnings :test :affected :deltas])))
+                                    (select-keys [:error :step :group :warnings :existing-warnings
+                                                  :test :affected :deltas])
+                                    (summarize (:verbose a))))
       "edit_rename"       (text (-> (api/rename! session (sym :ns) (sym :old)
                                                  (sym :new) :prompt (:prompt a))
-                                    (select-keys [:error :renamed :test :affected :delta])))
+                                    (select-keys [:error :renamed :test :affected :delta])
+                                    (summarize (:verbose a))))
       "test_run"          (text (api/test-run! session (sym :ns)))
       "restart"           (do (api/restart! session) (text "restarted"))
       "build"             (text (str "built at " (api/build! session (:dir a))))
