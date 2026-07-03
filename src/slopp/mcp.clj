@@ -166,6 +166,17 @@
                                :form {:type "string"} :name {:type "string"}
                                :prompt {:type "string"} :agent {:type "string"}}
                   :required ["ns" "from" "form" "name"]}}
+   {:name "turn_begin"
+    :description "Open your TURN: record the user's VERBATIM ask as the root intent of everything you do until turn_end. Required before any write when the server enforces turns. Pass your agent label."
+    :inputSchema {:type "object"
+                  :properties {:agent {:type "string"} :intent {:type "string"}
+                               :user {:type "string"}}
+                  :required ["agent" "intent"]}}
+   {:name "turn_end"
+    :description "Close your turn (stable or not — a red turn is still history). Sub-agents don't call this; they ride your turn."
+    :inputSchema {:type "object"
+                  :properties {:agent {:type "string"} :note {:type "string"}}
+                  :required ["agent"]}}
    {:name "query_changes"
     :description "YOUR episode: everything you have done since your last checkpoint — net per-form diffs (:was/:now), the step list, and the red/green verification arc. Pass your :agent label (essential when sub-agents work in parallel)."
     :inputSchema {:type "object" :properties {:agent {:type "string"}}}}
@@ -269,6 +280,8 @@
 
 (def ^:private cheat-sheet
   "slopp cheat-sheet
+TURN:    turn_begin {agent, intent: <user's verbatim ask>} FIRST -- writes are
+         refused without an open turn; turn_end {agent} when done (red is ok)
 ORIENT:  query_project (everything, one call) · query_search {pattern} (the grep)
          query_symbol {ns name} (one form's source) · query_references {ns name}
 OBSERVE: query_eval {code} (your REPL: call anything; cannot redefine code)
@@ -314,6 +327,22 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
 
 (defn- call-tool [session {:keys [name arguments]}]
   (api/sync-with-journal! session)      ; m5b: absorb other servers' commits
+  (when (and (:require-turns? @session)
+             (contains? write-tools name)
+             (not= "checkpoint" name))  ; checkpoint closes work; always allowed
+    (let [agent (:agent arguments)]
+      (cond
+        (nil? agent)
+        (throw (ex-info (str name " needs an :agent label (turns are enforced "
+                             "here — every write must trace to who did it and "
+                             "why)")
+                        {}))
+        (not (api/turn-open? session agent))
+        (throw (ex-info (str "no open turn for \"" agent "\" — call "
+                             "turn_begin {agent, intent: <the user's verbatim "
+                             "ask>} first; sub-agents ride their root agent's "
+                             "turn")
+                        {})))))
   (let [a   arguments
         sym (fn [k]
               (if-let [v (get a k)]
@@ -339,6 +368,11 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
       "query_symbol"      (text (api/query-symbol session (sym :ns) (sym :name)))
       "query_references"  (text (vec (api/query-references session (sym :ns) (sym :name))))
       "query_lineage"     (text (vec (api/query-lineage session (sym :ns) (sym :name))))
+      "turn_begin"        (text (api/turn-begin! session :agent (:agent a)
+                                                  :intent (:intent a)
+                                                  :user (:user a)))
+      "turn_end"          (text (api/turn-end! session :agent (:agent a)
+                                               :note (:note a)))
       "query_changes"     (text (api/query-changes session :agent (:agent a)))
       "episode_revert"    (text (-> (api/revert-episode! session
                                                          :agent (:agent a)
@@ -497,6 +531,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
   [& [dir]]
   (let [session (api/open! (cond-> {:warm-spare? true}
                              dir (assoc :dir dir)))]
+    (swap! session assoc :require-turns? true)   ; real servers enforce turns
     (try
       (serve! session (io/reader System/in) (io/writer System/out))
       (finally (api/close! session)))))

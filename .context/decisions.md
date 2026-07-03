@@ -224,6 +224,21 @@ the change here (same commit).
   differing by :at is fine because causal delivery, not value-identity,
   governs iterated merges.
 
+- **P4-m6.2 — Turns are explicit AND enforced (user-designed).**
+  `turn_begin {agent, intent: <verbatim user ask>, user}` / `turn_end` record
+  the ROOT intent as `:turn-begin`/`:turn-end` deltas; the collapsed history
+  wraps the turn's episode tree in a `{:turn {:intent :user :episodes}}`
+  bracket. Real servers (mcp/-main, http/-main set `:require-turns?`)
+  REFUSE writes without an agent label + open turn — the compile-gate
+  precedent: hard gates with teaching errors beat conventions. Sub-agents
+  ride their root agent's turn (path labels); `checkpoint` is always allowed
+  (it closes work). api-level sessions stay ungated (tests, seeding,
+  scripts). The zero-ceremony path: Claude Code hooks run the one-shot
+  `slopp.turn` CLI (UserPromptSubmit → begin with the verbatim prompt,
+  Stop → end), appending markers OUT-OF-BAND to the journal — the agent's
+  server absorbs them via m5b sync, so the model never has to relay its own
+  instructions. A turn may end red — failed turns are history too.
+
 ## H — host
 
 - **H1 — slopp itself is Clojure/JVM** (same runtime as image + tooling; no

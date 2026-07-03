@@ -298,6 +298,20 @@
                agent (assoc :agent agent)))
      did]))
 
+(defn record-turn
+  "Append a turn marker (:turn-begin carries the VERBATIM user ask — the root
+  intent of everything that follows; :turn-end closes the bracket, stable or
+  not). Returns [store' delta]."
+  [store kind & {:keys [agent intent user note]}]
+  (let [[did store'] (gen-id store "d")
+        delta (cond-> {:id did :parent (:id (last (:deltas store)))
+                       :op kind :ns '*session* :at (now-ms)}
+                agent  (assoc :agent agent)
+                intent (assoc :intent intent)
+                user   (assoc :user user)
+                note   (assoc :note note))]
+    [(update store' :deltas conj delta) delta]))
+
 (defn sources-at
   "The {form-id source-text} content view as of delta `at-id` (inclusive;
   nil = before any delta). Reconstructed from the log — powers episode

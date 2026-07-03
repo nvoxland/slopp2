@@ -400,7 +400,32 @@
                                          (nil? agent) (dissoc :agent))})
                             out))))
                     (group-by :agent relevant))]
-      (let [parent-of (fn [agent]
+      (let [turn-brackets
+            (vec (mapcat (fn [[agent ms]]
+                           (loop [ms ms, open nil, out []]
+                             (if-let [m (first ms)]
+                               (cond
+                                 (= :turn-begin (:op m))
+                                 (recur (rest ms) m out)
+                                 (and open (= :turn-end (:op m)))
+                                 (recur (rest ms) nil
+                                        (conj out {:agent agent
+                                                   :intent (:intent open)
+                                                   :user (:user open)
+                                                   :from (:id open)
+                                                   :to (:id m)}))
+                                 :else (recur (rest ms) open out))
+                               (if open
+                                 (conj out {:agent agent :open? true
+                                            :intent (:intent open)
+                                            :user (:user open)
+                                            :from (:id open)})
+                                 out))))
+                         (group-by :agent
+                                   (filter #(contains? #{:turn-begin :turn-end}
+                                                       (:op %))
+                                           ds))))
+            parent-of (fn [agent]
                         (when-let [i (and agent
                                           (clojure.string/last-index-of agent "/"))]
                           (subs agent 0 i)))
@@ -425,10 +450,33 @@
                          tops)
             ;; orphans: children whose parent episode isn't in view
             claimed (into #{} (mapcat #(get-in % [:episode :children])) nested)
-            orphans (remove #(claimed (:episode %)) kids)]
-        (->> (concat nested orphans)
+            orphans (remove #(claimed (:episode %)) kids)
+            eps     (concat nested orphans)
+            in-turn? (fn [t e]
+                       (let [ta (:agent t)
+                             ea (get-in e [:episode :agent])]
+                         (and ea ta
+                              (or (= ea ta)
+                                  (clojure.string/starts-with? ea (str ta "/")))
+                              (<= (get pos (:from t) 0)
+                                  (get pos (get-in e [:episode :from]) 0))
+                              (<= (get pos (get-in e [:episode :from]) 0)
+                                  (get pos (:to t) Long/MAX_VALUE)))))
+            turns   (mapv (fn [t]
+                            {:turn (assoc t :episodes
+                                          (mapv :episode
+                                                (filter #(in-turn? t %) eps)))})
+                          turn-brackets)
+            claimed-eps (into #{}
+                              (mapcat #(get-in % [:turn :episodes]))
+                              turns)
+            eps     (remove #(claimed-eps (:episode %)) eps)]
+        (->> (concat turns eps)
              (sort-by #(- (get pos (or (get-in % [:episode :to])
-                                       (get-in % [:episode :from])))))
+                                       (get-in % [:episode :from])
+                                       (get-in % [:turn :to])
+                                       (get-in % [:turn :from]))
+                              0)))
              (filter #(or (nil? contains)
                           (clojure.string/includes?
                            (str (get-in % [:episode :label]) " "
@@ -507,6 +555,43 @@
     (if-let [b (episode-boundary store agent)]
       (rest (drop-while #(not= b (:id %)) ds))
       ds)))
+
+(defn turn-begin!
+  "Open `agent`'s turn, recording the VERBATIM user ask as the root intent of
+  everything until turn-end. A new begin supersedes an unclosed one."
+  [session & {:keys [agent intent user]}]
+  (commit-appended! session
+                    #(first (store/record-turn % :turn-begin
+                                               :agent agent :intent intent
+                                               :user user))
+                    [])
+  {:turn :open :agent agent :intent intent})
+
+(defn turn-end!
+  "Close `agent`'s turn (stable or not — a red turn is still history)."
+  [session & {:keys [agent note]}]
+  (commit-appended! session
+                    #(first (store/record-turn % :turn-end
+                                               :agent agent :note note))
+                    [])
+  {:turn :closed :agent agent})
+
+(defn turn-open?
+  "Does `agent-label` (or any of its path ancestors — sub-agents ride the
+  root agent's turn) have an open :turn-begin?"
+  [session agent-label]
+  (let [ds (store/deltas (:store @session))
+        open? (fn [lbl]
+                (let [marks (filter #(and (contains? #{:turn-begin :turn-end}
+                                                     (:op %))
+                                          (= lbl (:agent %)))
+                                    ds)]
+                  (= :turn-begin (:op (last marks)))))
+        roots (when agent-label
+                (let [parts (clojure.string/split agent-label #"/")]
+                  (map #(clojure.string/join "/" (take (inc %) parts))
+                       (range (count parts)))))]
+    (boolean (some open? (or roots [agent-label])))))
 
 (defn query-changes
   "The agent's EPISODE — everything since `:agent`'s last checkpoint: net

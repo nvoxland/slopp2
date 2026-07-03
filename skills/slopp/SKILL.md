@@ -15,6 +15,11 @@ Server: `clojure -M -m slopp.mcp` (stdio) from the slopp repo.
 
 ## The workflow loop
 
+0. **Open your turn.** `turn_begin {agent, intent: <the user's VERBATIM ask>}`
+   — servers REFUSE writes without an open turn, and every delta must carry
+   your `agent` label. `turn_end {agent}` when the turn is over (stable or
+   not). Sub-agents don't open turns; they ride their root agent's turn via
+   path labels (`alice/impl`).
 1. **Orient with ONE call.** `query_project` → every namespace with its full
    outline (names, arities, doc lines, `!`-effect status, test-ness). Then
    `query_search {pattern}` to FIND things (the grep — search before reading),

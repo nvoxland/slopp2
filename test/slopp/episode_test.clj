@@ -3,7 +3,10 @@
   from the journal (no tagging), PER-AGENT so parallel sub-agents don't
   collapse into one braid, with a shared-form guard on revert."
   (:require [clojure.test :refer [deftest is testing]]
+            [clojure.java.shell]
             [slopp.store :as store]
+            [slopp.turn]
+            [slopp.mcp]
             [slopp.api :as api]))
 
 (def seed
@@ -119,4 +122,94 @@
       (testing "deltas carry wall-clock provenance"
         (is (number? (:at (last (store/deltas (:store @sess))))))
         (is (every? #(number? (:at %)) (store/deltas (:store @sess)))))
+      (finally (api/close! sess)))))
+
+(deftest turn-markers-bracket-the-history               ; P4-m6.2
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'ep.core seed)
+      (api/turn-begin! sess :agent "alice"
+                       :intent "add rush-order support to checkout"
+                       :user "nathan")
+      (api/edit-replace! sess 'ep.core 'f "(defn f [x] (+ x 7))"
+                         :prompt "step 1" :agent "alice")
+      (api/edit-replace! sess 'ep.core 'g "(defn g [x] :sub-work)"
+                         :prompt "sub step" :agent "alice/impl")
+      (api/checkpoint! sess :label "rush support" :agent "alice")
+      (let [r (api/turn-end! sess :agent "alice")]
+        (is (nil? (:error r))))
+      (testing "the collapsed history has a TURN bracket with the verbatim ask"
+        (let [rows (api/query-history sess :collapse true)
+              turn (first (keep :turn rows))]
+          (is (some? turn))
+          (is (= "add rush-order support to checkout" (:intent turn)))
+          (is (= "nathan" (:user turn)))
+          (testing "the turn contains its episode tree (sub-agents nested)"
+            (let [agents (set (concat (map :agent (:episodes turn))
+                                      (mapcat #(map :agent (:children %))
+                                              (:episodes turn))))]
+              (is (contains? agents "alice"))
+              (is (contains? agents "alice/impl"))))
+          (testing "turn contents don't ALSO appear as top-level rows"
+            (is (not-any? #(= "alice" (get-in % [:episode :agent])) rows)))))
+      (finally (api/close! sess)))))
+
+(deftest hook-driven-turn-markers-flow-through-the-journal
+  ;; the Claude Code hooks path: a one-shot CLI appends the turn delta
+  ;; OUT-OF-BAND; the agent's server absorbs it via journal sync (m5b)
+  (let [dir (str (System/getProperty "java.io.tmpdir")
+                 "/slopp-turn-" (System/nanoTime))
+        sess (api/open! {:dir dir})]
+    (try
+      (api/ingest! sess 'ep.core seed)
+      ;; simulate the UserPromptSubmit hook (separate process in production)
+      (slopp.turn/-main dir "begin" "alice" "fix" "the" "flaky" "test")
+      (api/sync-with-journal! sess)
+      (api/edit-replace! sess 'ep.core 'f "(defn f [x] (* x 2))"
+                         :prompt "the fix" :agent "alice")
+      (slopp.turn/-main dir "end" "alice")
+      (api/sync-with-journal! sess)
+      (let [turn (first (keep :turn (api/query-history sess :collapse true)))]
+        (is (= "fix the flaky test" (:intent turn)))
+        (is (= 1 (count (:episodes turn)))))
+      (finally
+        (api/close! sess)
+        (clojure.java.shell/sh "rm" "-rf" dir)))))
+
+(deftest turn-gate-blocks-unrooted-writes               ; P4-m6.2 enforcement
+  (let [sess (api/open!)]
+    (try
+      (swap! sess assoc :require-turns? true)   ; transport policy (real servers set this)
+      (api/ingest! sess 'ep.core seed)          ; api-level stays ungated
+      (let [call (fn [tool args]
+                   (get-in (slopp.mcp/handle sess
+                                             {:id 1 :method "tools/call"
+                                              :params {:name tool :arguments args}})
+                           [:result :content 0 :text]))]
+        (testing "a write with no open turn is refused, with teaching"
+          (let [r (call "edit_replace_form"
+                        {:ns "ep.core" :name "f" :agent "alice"
+                         :source "(defn f [x] (* x 3))"})]
+            (is (re-find #"turn_begin" r))))
+        (testing "a write with no agent label is refused too"
+          (is (re-find #"agent" (call "edit_add_form"
+                                      {:ns "ep.core"
+                                       :source "(defn zz [x] x)"}))))
+        (testing "after turn_begin the same write lands"
+          (call "turn_begin" {:agent "alice" :intent "triple f"})
+          (let [r (call "edit_replace_form"
+                        {:ns "ep.core" :name "f" :agent "alice"
+                         :source "(defn f [x] (* x 3))"})]
+            (is (not (re-find #"turn_begin" r)))))
+        (testing "a sub-agent path rides the ROOT agent's open turn"
+          (let [r (call "edit_add_form"
+                        {:ns "ep.core" :agent "alice/impl"
+                         :source "(defn sub-added [x] x)"})]
+            (is (not (re-find #"turn_begin" r)))))
+        (testing "after turn_end the gate closes again"
+          (call "turn_end" {:agent "alice"})
+          (is (re-find #"turn_begin"
+                       (call "edit_delete_form"
+                             {:ns "ep.core" :name "sub-added"
+                              :agent "alice"})))))
       (finally (api/close! sess)))))

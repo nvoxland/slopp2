@@ -83,7 +83,9 @@
   nil)
 
 (defn -main [& [port dir]]
-  (start-server! (Long/parseLong (or port "7357"))
-                 (cond-> {:warm-spare? true} dir (assoc :dir dir)))
+  (let [{:keys [session]} (start-server! (Long/parseLong (or port "7357"))
+                                         (cond-> {:warm-spare? true}
+                                           dir (assoc :dir dir)))]
+    (swap! session assoc :require-turns? true))  ; real servers enforce turns
   (println (str "slopp http transport on 127.0.0.1:" (or port "7357")))
   @(promise))
