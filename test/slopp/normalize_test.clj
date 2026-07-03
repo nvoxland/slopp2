@@ -57,5 +57,13 @@
           (is (= :checkpoint (:op (last (store/deltas (:store @sess))))))))
       (testing "an immediate second checkpoint is a no-op"
         (let [r (api/checkpoint! sess)]
-          (is (zero? (:normalized r)))))
+          (is (zero? (:normalized r)))
+          (is (empty? (:lint r)))))
+      (testing "checkpoint lints the changed namespaces (kondo findings)"
+        (api/add-form! sess 'cp.core "(defn sloppy [x] (let [unused 1] x))")
+        (let [r    (api/checkpoint! sess :label "lint probe")
+              hits (filter #(= :unused-binding (:type %)) (:lint r))]
+          (is (seq hits))
+          (is (= 'cp.core/sloppy (:form (first hits))))
+          (is (= :warning (:level (first hits))))))
       (finally (api/close! sess)))))

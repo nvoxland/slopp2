@@ -228,8 +228,13 @@
       (.flush out-writer)))
   nil)
 
-(defn -main [& _]
-  (let [session (api/open! {:warm-spare? true})]
+(defn -main
+  "Start the stdio MCP server. An optional `dir` argument makes the session
+  durable (store at <dir>/.slopp/store.db); without it the session is
+  ephemeral."
+  [& [dir]]
+  (let [session (api/open! (cond-> {:warm-spare? true}
+                             dir (assoc :dir dir)))]
     (try
       (serve! session (io/reader System/in) (io/writer System/out))
       (finally (api/close! session)))))

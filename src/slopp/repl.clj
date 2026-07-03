@@ -12,9 +12,14 @@
            [java.util.concurrent TimeUnit]))
 
 (def ^:private clojure-bin
-  "Absolute path avoids PATH surprises under ProcessBuilder (Phase-1; portability
-  noted)."
-  "/opt/homebrew/bin/clojure")
+  "The clojure launcher for owned images: SLOPP_CLOJURE env override, else the
+  first executable found in the usual install locations, else trust PATH."
+  (or (System/getenv "SLOPP_CLOJURE")
+      (some (fn [dir]
+              (let [f (io/file dir "clojure")]
+                (when (.canExecute f) (str f))))
+            ["/opt/homebrew/bin" "/usr/local/bin" "/usr/bin"])
+      "clojure"))
 
 (defn- default-cmd []
   ;; A clean target image: just Clojure + nREPL. Target forms are eval'd IN over

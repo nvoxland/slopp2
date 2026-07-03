@@ -492,12 +492,23 @@
               (swap! session update :store store/record-verification main-ns s)
               (persist-last! session)
               s)))
+        ;; kondo lint over every namespace touched since the last checkpoint —
+        ;; syntax + best-practice findings, form-addressed (user-requested gate)
+        lint (vec (for [ns-sym (distinct (map #(store/ns-of-form-id (:store @session) %)
+                                              changed))
+                        :let [st* (:store @session)]
+                        f (index/lint (render/render-ns st* ns-sym))]
+                    (assoc f :ns ns-sym
+                           :form (when-let [e (render/owner-form st* ns-sym
+                                                                 (:row f) (:col f))]
+                                   (symbol (str ns-sym) (str (or (:name e) (:id e))))))))
         [st2 cid] (store/record-checkpoint (:store @session) label)]
     (swap! session assoc :store st2 :checkpoint cid)
     (persist-last! session)
     (cond-> {:checkpoint cid
              :normalized (count rewrites)
-             :rewrites   (mapv #(select-keys % [:form :applied]) rewrites)}
+             :rewrites   (mapv #(select-keys % [:form :applied]) rewrites)
+             :lint       lint}
       summary (assoc :test summary))))
 
 (defn- rename-in-trace

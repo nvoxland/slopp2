@@ -83,6 +83,15 @@
                   (str (:name d) "!")
                   (str/replace (str (:name d)) #"!+$" ""))})))
 
+(defn lint
+  "clj-kondo FINDINGS for `source` (syntax + best-practice violations, distinct
+  from the :analysis extraction): [{:level :type :message :row :col} ...],
+  warnings and errors only."
+  [source]
+  (->> (:findings (with-in-str source (kondo/run! {:lint ["-"]})))
+       (filter #(#{:warning :error} (:level %)))
+       (mapv #(select-keys % [:level :type :message :row :col]))))
+
 (defn references
   "Usages of `to-ns/to-name` — who references this var."
   [analysis to-ns to-name]
