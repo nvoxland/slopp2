@@ -193,6 +193,54 @@
          :test     summary
          :affected (or affected :all)}))))
 
+(defn add-form!
+  "Add a new top-level form to `ns-sym` (O1 base write): dialect gate, `:add`
+  delta, hot-reload into the image, verification, provenance. Returns
+  {:delta :warnings :test :affected} or {:error msg}."
+  [session ns-sym source & {:keys [prompt]}]
+  (let [{:keys [node error]} (edit/parse-form source)
+        nm (some-> node store/form-symbol)]
+    (cond
+      error {:error error}
+
+      (and nm (store/form-named (:store @session) ns-sym nm))
+      {:error (str nm " already exists in " ns-sym)}
+
+      :else
+      (if-let [[st' delta] (store/append-form (:store @session) ns-sym node
+                                              :prompt prompt)]
+        (do (swap! session assoc :store st')
+            (persist-last! session)
+            (let [image (:image @session)]
+              (repl/eval! image (format "(in-ns '%s)" ns-sym))
+              (repl/eval! image source))
+            (let [affected (when nm (affected-tests session ns-sym nm))
+                  summary  (run-verification! session ns-sym affected)]
+              (swap! session update :store store/record-verification ns-sym summary)
+              (persist-last! session)
+              {:delta    delta
+               :warnings (edit/ns-warnings (:store @session) ns-sym)
+               :test     summary
+               :affected (or affected :all)}))
+        {:error (str "no namespace " ns-sym " (ingest it first)")}))))
+
+(defn delete-form!
+  "Delete the form named `nm` from `ns-sym`: `:delete` delta, `ns-unmap` in the
+  image, verification (tests that exercised it will go red — the honest signal
+  if it was still referenced), provenance."
+  [session ns-sym nm & {:keys [prompt]}]
+  (if-let [[st' delta] (store/remove-form (:store @session) ns-sym nm
+                                          :prompt prompt)]
+    (do (swap! session assoc :store st')
+        (persist-last! session)
+        (let [affected (affected-tests session ns-sym nm)]
+          (repl/eval! (:image @session) (format "(ns-unmap '%s '%s)" ns-sym nm))
+          (let [summary (run-verification! session ns-sym affected)]
+            (swap! session update :store store/record-verification ns-sym summary)
+            (persist-last! session)
+            {:delta delta :test summary :affected (or affected :all)})))
+    {:error (str "no form named " nm " in " ns-sym)}))
+
 (defn test-run!
   "Traced, diagnosed run of `ns-sym`'s tests; refreshes the test→form map and
   records the result (C4)."

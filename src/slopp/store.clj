@@ -10,7 +10,8 @@
 
   Ids are a monotonic counter here (single-agent Phase 1). Phase-4 multi-agent
   needs globally-unique ids (uuid / lamport)."
-  (:require [rewrite-clj.parser :as p]
+  (:require [clojure.string :as str]
+            [rewrite-clj.parser :as p]
             [rewrite-clj.node :as n]))
 
 (defn empty-store []
@@ -97,6 +98,52 @@
                       :op op :ns ns-sym :form-id (:id elem) :prompt prompt}]
         [(-> store
              (assoc-in [:namespaces ns-sym :elements] (assoc elems idx new-elem))
+             (update :deltas conj delta))
+         delta]))))
+
+(defn append-form
+  "Append a new form to `ns-sym` (separated by a newline, followed by one) with
+  a fresh id; ONE `:add` delta. Returns [store' delta], or nil if the namespace
+  doesn't exist."
+  [store ns-sym node & {:keys [prompt]}]
+  (when-let [elems (get-in store [:namespaces ns-sym :elements])]
+    (let [needs-nl?    (and (seq elems)
+                            (not (str/ends-with? (n/string (:node (peek elems))) "\n")))
+          [fid store]  (gen-id store "f")
+          [did store'] (gen-id store "d")
+          new-elems    (cond-> elems
+                         needs-nl? (conj {:kind :sep :node (n/newlines 1)})
+                         true      (conj {:id fid :kind :form
+                                          :name (form-symbol node) :node node}
+                                         {:kind :sep :node (n/newlines 1)}))
+          delta        {:id did :parent (:id (last (:deltas store)))
+                        :op :add :ns ns-sym :form-id fid :prompt prompt}]
+      [(-> store'
+           (assoc-in [:namespaces ns-sym :elements] new-elems)
+           (update :deltas conj delta))
+       delta])))
+
+(defn remove-form
+  "Remove the form named `nm` from `ns-sym` (plus its immediately following
+  separator, so no doubled blank line remains); ONE `:delete` delta. Returns
+  [store' delta], or nil if no such form."
+  [store ns-sym nm & {:keys [prompt]}]
+  (let [elems (get-in store [:namespaces ns-sym :elements])
+        idx   (first (keep-indexed
+                      (fn [i e] (when (and (= :form (:kind e)) (= nm (:name e))) i))
+                      elems))]
+    (when idx
+      (let [fid          (:id (nth elems idx))
+            drop-next?   (and (< (inc idx) (count elems))
+                              (= :sep (:kind (nth elems (inc idx)))))
+            new-elems    (into (subvec elems 0 idx)
+                               (subvec elems (+ idx (if drop-next? 2 1))))
+            [did store'] (gen-id store "d")
+            delta        {:id did :parent (:id (last (:deltas store)))
+                          :op :delete :ns ns-sym :form-id fid :name nm
+                          :prompt prompt}]
+        [(-> store'
+             (assoc-in [:namespaces ns-sym :elements] new-elems)
              (update :deltas conj delta))
          delta]))))
 

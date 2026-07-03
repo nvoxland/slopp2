@@ -34,25 +34,38 @@
            (first (filter banned-syms (all-symbols node))))
       :else nil)))
 
+(defn parse-form
+  "Parse `source` as exactly ONE dialect-legal top-level form (the D3/D4 gate
+  every write shares). Returns {:node node} or {:error msg}."
+  [source]
+  (let [forms (filter n/sexpr-able? (n/children (p/parse-string-all source)))]
+    (if (not= 1 (count forms))
+      {:error (str "expected exactly one top-level form, got " (count forms))}
+      (let [node (first forms)]
+        (if-let [err (dialect-check node)]
+          {:error err}
+          {:node node})))))
+
+(defn ns-warnings
+  "D6 `!`-effect violations for `ns-sym`'s current state."
+  [store ns-sym]
+  (index/effect-violations (index/analyze (render/render-ns store ns-sym))))
+
 (defn replace-form
   "Pure edit: validate `new-source` (one dialect-legal form) and replace the form
   named `form-name` in `ns-sym`, keeping its id and appending a `:replace` delta.
   Returns {:store :delta :warnings} (warnings = D6 `!`-effect violations of the
   resulting namespace) or {:error msg}."
   [store ns-sym form-name new-source & {:keys [prompt]}]
-  (let [forms (filter n/sexpr-able? (n/children (p/parse-string-all new-source)))]
-    (if (not= 1 (count forms))
-      {:error (str "expected exactly one top-level form, got " (count forms))}
-      (let [node (first forms)]
-        (if-let [err (dialect-check node)]
-          {:error err}
-          (if-let [[store' delta] (store/replace-node store ns-sym form-name node
-                                                      :prompt prompt)]
-            {:store    store'
-             :delta    delta
-             :warnings (index/effect-violations
-                        (index/analyze (render/render-ns store' ns-sym)))}
-            {:error (str "no form named " form-name " in " ns-sym)}))))))
+  (let [{:keys [node error]} (parse-form new-source)]
+    (if error
+      {:error error}
+      (if-let [[store' delta] (store/replace-node store ns-sym form-name node
+                                                  :prompt prompt)]
+        {:store    store'
+         :delta    delta
+         :warnings (ns-warnings store' ns-sym)}
+        {:error (str "no form named " form-name " in " ns-sym)}))))
 
 (defn apply-replace!
   "Pipeline through hot-reload over `system` {:store store :image handle}:

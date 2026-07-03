@@ -45,6 +45,18 @@
                   :properties {:ns {:type "string"} :name {:type "string"}
                                :source {:type "string"} :prompt {:type "string"}}
                   :required ["ns" "name" "source"]}}
+   {:name "edit_add_form"
+    :description "Add a new top-level form to a namespace (tracked delta, hot-reload, verify)."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :source {:type "string"}
+                               :prompt {:type "string"}}
+                  :required ["ns" "source"]}}
+   {:name "edit_delete_form"
+    :description "Delete a top-level form from a namespace (tracked delta, ns-unmap, verify)."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :name {:type "string"}
+                               :prompt {:type "string"}}
+                  :required ["ns" "name"]}}
    {:name "edit_rename"
     :description "Rename a form and every reference to it, across namespaces (one coordinated delta; shadow-safe)."
     :inputSchema {:type "object"
@@ -77,6 +89,12 @@
       "edit_replace_form" (text (-> (api/edit-replace! session (sym :ns) (sym :name)
                                                        (:source a) :prompt (:prompt a))
                                     (select-keys [:error :warnings :test :affected :delta])))
+      "edit_add_form"     (text (-> (api/add-form! session (sym :ns) (:source a)
+                                                   :prompt (:prompt a))
+                                    (select-keys [:error :warnings :test :affected :delta])))
+      "edit_delete_form"  (text (-> (api/delete-form! session (sym :ns) (sym :name)
+                                                      :prompt (:prompt a))
+                                    (select-keys [:error :test :affected :delta])))
       "edit_rename"       (text (-> (api/rename! session (sym :ns) (sym :old)
                                                  (sym :new) :prompt (:prompt a))
                                     (select-keys [:error :renamed :test :affected :delta])))
