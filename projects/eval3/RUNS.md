@@ -11,3 +11,6 @@
 | 2026-07-03 | haiku  | slopp@b3b5dd4 (X2/X3/X4 fixed) | 48,684 | 437s | 66 | PASS acceptance; clean cross-ns code (no inlining this time) |
 | 2026-07-03 | sonnet | slopp@b3b5dd4 (X2/X3/X4 fixed) | 45,977 | 244s | 19 | PASS; one-shot edit_rename across 3 nses; BEAT its files baseline (-42% tok, -39% wall, -74% calls) |
 | 2026-07-03 | opus   | slopp@b3b5dd4 (X2/X3/X4 fixed) | 52,790 | 342s | 19 | PASS; TWO mutations total (1 rename + 1 group of 8 forms); ~parity with files (+12% tok) |
+| 2026-07-03 | haiku  | slopp@fcdbe7d (items 0-5: D5.1, query_project/search, hints, subform) | 40,333 | 380s | 54 | PASS acceptance; "no friction" reported; -17% tok vs 3b |
+| 2026-07-03 | sonnet | slopp@fcdbe7d (items 0-5) | 53,622 | 289s | 28 (61 slopp calls, curl-batched) | PASS; red/green per change; flagged query_references cross-ns gap |
+| 2026-07-03 | opus   | slopp@fcdbe7d (items 0-5) | 59,787 | 514s | 32 | PASS; red-first TDD w/ predicted reds; flagged no project-wide test_run |

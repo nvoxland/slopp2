@@ -241,3 +241,39 @@ Note (2026-07-03, 8e46d01): the wall collapse vs 66c30c0 (calculator
 1316->204ms, wordstats 1277->80ms) is D5.1 — deliberate TDD reds no longer
 pay a fresh-image restart + re-run; they return {:diagnosis :genuine} from
 the single run. inventory (no reds in script) stays flat, as expected.
+
+## Eval round 3c: same task/seed on improved slopp (@ fcdbe7d, items 0-5)
+
+Files baseline FROZEN from round 3 (nothing in the files workflow depends on
+slopp). 3/3 acceptance PASS, verified independently (rename gone, ship
+exactly 2x, bulk dropped/member kept 1500->500, [RUSH], :rush?, 12/12 nses
+green in every store).
+
+| model | files (frozen) | slopp 3b | slopp 3c | 3c vs files |
+|---|---|---|---|---|
+| haiku  | 36.3k / 192s / 40 | 48.7k / 437s / 66 | 40.3k / 380s / 54 | +11% tok (was +34%) |
+| sonnet | 79.2k / 403s / 72 | 46.0k / 244s / 19 | 53.6k / 289s / 28 | -32% tok, -28% wall |
+| opus   | 47.2k / 283s / 43 | 52.8k / 342s / 19 | 59.8k / 514s / 32 | +27% tok, +82% wall |
+
+- Aggregate: slopp 153.7k vs files 162.8k tokens (-5.5%; 3b was -9%), 114 vs
+  155 harness calls (-26%). Wall aggregate now FAVORS files (+35% slopp) --
+  the per-ns test_run sweep is the new dominant cost (see below).
+- haiku -- the explicit target of items 1+3 (query_project, help, hints) --
+  improved on every axis vs 3b and closed most of its files gap. It used
+  query_search and edit_rename cleanly and reported zero friction.
+- sonnet/opus ran heavier than their 3b selves (n=1 per cell; variance is
+  real). Both did far MORE verification this round: full per-namespace
+  test_run sweeps (12 calls each; sonnet ran 27 test_runs total) because
+  test_run has no project-wide form. That sweep tax -- not per-write
+  verification -- is now the top optimization target.
+
+Findings (3c):
+- F-3c1 test_run needs a no-:ns / :all form (both strong models paid 12
+  calls per full sweep; also each sweep re-pays traced instrumentation).
+- F-3c2 query_eval swallows exceptions -> returns [] (found during
+  acceptance probing; an agent debugging a red is blind to the error).
+- F-3c3 query_references only sees same-namespace usages (sonnet flagged;
+  cross-ns callers found only via query_search; rename itself is unaffected).
+- F-3c4 SKILL.md lacks the edit_group steps schema (opus probed for it).
+- F-3c5 verification narrowing before a trace map exists can report a
+  PARTIAL red set for a group (opus: only shipping-t of 3 expected reds).
