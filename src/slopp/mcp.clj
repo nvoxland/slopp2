@@ -157,7 +157,12 @@
 
 (defn- call-tool [session {:keys [name arguments]}]
   (let [a   arguments
-        sym #(symbol (get a %))]
+        sym (fn [k]
+              (if-let [v (get a k)]
+                (symbol v)
+                (throw (ex-info (str "missing required argument :"
+                                     (clojure.core/name k) " for " name)
+                                {}))))]
     (case name
       "ingest"            (text (api/ingest! session (sym :ns) (:source a)))
       "ns_create"         (text (api/create-ns! session (sym :ns)
@@ -199,10 +204,15 @@
                                     (select-keys [:error :step :group :warnings :existing-warnings
                                                   :test :affected :deltas])
                                     (summarize (:verbose a))))
-      "edit_rename"       (text (-> (api/rename! session (sym :ns) (sym :old)
-                                                 (sym :new) :prompt (:prompt a))
-                                    (select-keys [:error :renamed :test :affected :delta])
-                                    (summarize (:verbose a))))
+      ;; arg forgiveness: every eval run guessed name/to before finding old/new
+      "edit_rename"       (let [old (or (:old a) (:name a) (:from a))
+                                new (or (:new a) (:to a))]
+                            (when-not (and old new)
+                              (throw (ex-info "edit_rename needs :old and :new (aliases: :name/:from, :to)" {})))
+                            (text (-> (api/rename! session (sym :ns) (symbol old)
+                                                   (symbol new) :prompt (:prompt a))
+                                      (select-keys [:error :renamed :test :affected :delta])
+                                      (summarize (:verbose a)))))
       "ns_remove_require" (text (-> (api/remove-require! session (sym :ns) (sym :lib)
                                                          :prompt (:prompt a))
                                     (select-keys [:error :test :affected :delta])

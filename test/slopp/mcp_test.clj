@@ -48,6 +48,21 @@
           (is (re-find #"\b6\b" (call sess "query_eval" {:code "(demo/add 2 3)"})))))
       (finally (api/close! sess)))))
 
+(deftest rename-arg-forgiveness                        ; from the symmetric eval
+  (let [sess (api/open!)]
+    (try
+      (call sess "ingest" {:ns "ra" :source "(ns ra)\n(defn f [x] x)\n(defn g [x] (f x))\n"})
+      (testing "the aliases every eval run guessed first now just work"
+        (let [r (edn/read-string (call sess "edit_rename"
+                                       {:ns "ra" :name "f" :to "h"}))]
+          (is (nil? (:error r)))))
+      (testing "missing args produce a clear message, not a raw conversion error"
+        (is (re-find #"needs :old and :new"
+                     (call sess "edit_rename" {:ns "ra"})))
+        (is (re-find #"missing required argument :ns"
+                     (call sess "query_outline" {}))))
+      (finally (api/close! sess)))))
+
 (deftest green-responses-are-terse                     ; B1
   (let [sess (api/open!)]
     (try

@@ -47,8 +47,13 @@ Server: `clojure -M -m slopp.mcp` (stdio) from the slopp repo.
 **Every write must compile.** A form referencing something undefined is
 rejected on the spot (`{:error "...failed to compile: Unable to resolve..."}`)
 — nothing commits. So **define callees before callers**; for mutual recursion
-add `(declare name)` first, exactly as in ordinary Clojure. Do NOT work around
-a compile rejection with stub definitions — add the real dependency first.
+add `(declare name)` first, exactly as in ordinary Clojure.
+
+**Red-first TDD, slopp-style:** add the function with a deliberately minimal
+body AND its test in ONE `edit_group` — that group's verification returns the
+honest red with `:failures` inline; then `edit_replace_form` the real
+implementation for green. Two writes total. Don't stub-dance across many
+single writes; the per-write verification makes every red free to observe.
 
 ## Reading results
 
