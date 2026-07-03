@@ -168,12 +168,11 @@
     :description "Mark a unit of work done: deterministically normalize the forms changed since the last checkpoint (tracked :normalize delta, re-verified), and record a boundary in the history."
     :inputSchema {:type "object" :properties {:label {:type "string"}}}}
    {:name "test_run"
-    :description "Run a namespace's tests (all, or just those named in `only`) in the live image; record the result."
+    :description "Run tests in the live image and record the result. No :ns = EVERY namespace's tests in one call (the full-project sweep). :only restricts to named tests; :fresh true restarts first for a guaranteed-faithful run."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"}
                                :only {:type "array" :items {:type "string"}}
-                               :fresh {:type "boolean"}}
-                  :required ["ns"]}}
+                               :fresh {:type "boolean"}}}}
    {:name "help"
     :description "The slopp workflow cheat-sheet: which tool for what, how to read results."
     :inputSchema {:type "object" :properties {}}}
@@ -386,7 +385,8 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
                                       (select-keys [:error :extracted :group :test :affected])
                                       (summarize (:verbose a)))))
       "checkpoint"        (text (api/checkpoint! session :label (:label a)))
-      "test_run"          (text (api/test-run! session (sym :ns)
+      "test_run"          (text (api/test-run! session
+                                               (when (:ns a) (sym :ns))
                                                :only (some->> (:only a) (mapv symbol))
                                                :fresh (:fresh a)))
       "help"              (text cheat-sheet)

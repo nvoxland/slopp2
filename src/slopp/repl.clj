@@ -81,6 +81,23 @@
        (keep :value)
        (mapv (fn [v] (try (read-string v) (catch Exception _ v))))))
 
+(defn eval-checked!
+  "Like `eval!` but surfaces evaluation errors instead of silently dropping
+  them (F-3c2 — an eval that throws must not look like an empty result).
+  Returns {:values [...]} or {:err msg}."
+  [{:keys [client session]} code]
+  (let [msgs (doall (nrepl/message client {:op "eval" :code code
+                                           :session session}))
+        errs (concat (keep :err msgs)
+                     (mapcat (fn [m]
+                               (when (some #{"eval-error"} (:status m))
+                                 [(or (:ex m) "eval-error")]))
+                             msgs))]
+    (if (seq errs)
+      {:err (str/trim (str/join " " (distinct errs)))}
+      {:values (->> msgs (keep :value)
+                    (mapv (fn [v] (try (read-string v) (catch Exception _ v)))))})))
+
 (defn load!
   "Load `src` into the image attributed to `path` (VFS coordinates) via nREPL's
   load-file op — stack traces then cite the VFS file/line instead of

@@ -43,7 +43,7 @@ Server: `clojure -M -m slopp.mcp` (stdio) from the slopp repo.
 | Change a function | `edit_replace_form` (submit the whole new form) |
 | Small change INSIDE a big form | `edit_subform {ns form match source}` — give the exact subexpression and its replacement; never re-transcribe the rest (wrap = a replacement containing the match) |
 | Undo a change | `edit_revert {ns name}` (previous version) or `{:to delta-id}` from `query_form_history` |
-| Change SEVERAL forms for one reason | `edit_group` — atomic, verified once; sequencing single edits burns a false red + a restart between them |
+| Change SEVERAL forms for one reason | `edit_group {steps: [{action: "replace"\|"add"\|"delete", ns, name, source}], prompt}` — atomic, verified once; sequencing single edits burns a false red between them |
 | Rename anything | `edit_rename` — rewrites the def + every reference across namespaces, shadow-safe; NEVER rename by editing call sites yourself |
 | Reorder forms | `edit_move` (form X to just before form Y) |
 | Extract a helper | `edit_extract` — args `{ns, from, form, name}` where `form` is the exact subform source; params (the free locals) are computed for you, placement and the call-site rewrite are handled, behavior is re-verified |
@@ -112,6 +112,8 @@ rebuilds a faithful image from the store).
 - Add the test in the same breath as the function; narrowing and `:untested`
   only work when tests exist.
 - `test_run {:only [name]}` re-runs a single test while iterating on it.
+- Full-project sweep = `test_run` with NO `ns` — every namespace's tests in
+  one call. Never loop test_run over namespaces.
 - Checkpoint when you'd naturally say "done with that".
 
 ## Shipping

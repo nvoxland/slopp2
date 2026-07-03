@@ -213,10 +213,15 @@
        :source     (n/string (:node f))})))
 
 (defn query-references
-  "Usages of `ns-sym/nm` — who references it."
+  "Usages of `ns-sym/nm` across EVERY namespace (F-3c3 — same-ns-only results
+  sent an eval agent to query_search instead; analyses are memo-cached, so the
+  full scan is cheap)."
   [session ns-sym nm]
-  (index/references (index/analyze (render/render-ns (:store @session) ns-sym))
-                    ns-sym nm))
+  (let [st (:store @session)]
+    (vec (mapcat (fn [n]
+                   (index/references (index/analyze (render/render-ns st n))
+                                     ns-sym nm))
+                 (sort (keys (:namespaces st)))))))
 
 (defn query-lineage
   "Provenance chain for `nm`: the deltas that created or changed its form (who
@@ -292,7 +297,10 @@
   [session code]
   (if-let [err (edit/observe-gate code)]
     {:error err}
-    (repl/eval! (:image @session) code)))
+    (let [r (repl/eval-checked! (:image @session) code)]
+      (if (:err r)                                  ; F-3c2: never a silent []
+        {:error (:err r)}
+        (:values r)))))
 
 (defn query-observe
   "Run `driver-code` (observe-gated) while capturing the args and return value
@@ -707,7 +715,9 @@
                                   step-nms)
                     affected (when (not-any? #{:unknown} per-step)
                                (vec (sort (apply set/union per-step))))
-                    main-ns  (:ns (first steps))
+                    ;; F-3c5: with no/partial trace info the fallback run must
+                    ;; cover EVERY touched namespace, not just the first step's
+                    main-ns  (vec (distinct (map :ns steps)))
                     summary  (run-verification! session main-ns
                                                 (when (seq affected) affected)
                                                 :edited edited)]
@@ -775,11 +785,14 @@
 (defn test-run!
   "Traced, diagnosed run of `ns-sym`'s tests (all, or just the plain names in
   `:only`); refreshes the test→form map and records the result (C4).
+  `ns-sym` nil = the WHOLE project in one image eval, instrumentation paid
+  once (F-3c1 — per-ns sweeps were 12 calls and 12 instrumentation passes).
   D5.1: reds are judged against the forms changed since the last verification;
   `:fresh true` restarts first for a guaranteed-faithful single run."
   [session ns-sym & {:keys [only fresh]}]
   (let [t0          (System/nanoTime)
         st          (:store @session)
+        ns-sym      (or ns-sym (vec (sort (keys (:namespaces st)))))
         last-verify (:id (last (filter #(= :verify (:op %)) (store/deltas st))))
         edited      (into #{}
                           (keep (fn [id]

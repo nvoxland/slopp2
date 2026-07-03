@@ -64,8 +64,10 @@
 
 (defn traced-run
   "Run `test-ns`'s test vars (all of them, or just those named in `only`),
-  recording which fn vars of `target-nses` each test touches. Instrumentation is
-  temporary — originals are restored in a finally. Returns
+  recording which fn vars of `target-nses` each test touches. `test-ns` may be
+  a collection of namespaces — the whole project verifies in ONE run, paying
+  instrumentation once (F-3c1). Instrumentation is temporary — originals are
+  restored in a finally. Returns
   {:summary {:test .. :pass .. :fail .. :error .. :type :summary
              :failures [{:test :type :message :expected :actual} ...]}  ; when red
    :trace   {qualified-test-sym #{qualified-form-sym ...}}}
@@ -74,7 +76,8 @@
   multimethod (F1) — without this they'd be printed to the image's stdout and
   lost. Bounded: ≤20 entries, values truncated to 400 chars."
   [test-ns target-nses only]
-  (let [touched   (atom #{})
+  (let [test-nses (if (coll? test-ns) test-ns [test-ns]) ; F-3c1: whole project
+        touched   (atom #{})
         originals (atom {})
         current   (atom nil)
         failures  (atom [])]
@@ -89,7 +92,9 @@
                               (swap! touched conj qs)
                               (apply orig args))))))
     (try
-      (let [tvars    (cond->> (filter (comp :test meta) (vals (ns-interns test-ns)))
+      (let [tvars    (cond->> (mapcat #(filter (comp :test meta)
+                                               (vals (ns-interns %)))
+                                      test-nses)
                        only (filter (comp (set only) :name meta)))
             counters (ref t/*initial-report-counters*)
             record   (fn [m]

@@ -32,7 +32,10 @@ by convention it must not redefine code; redefinition belongs to edit ops).
   persist + hot-reload together and verify ONCE. Deltas share a `:group` id.
   Use for every multi-form refactor — it avoids the mid-refactor red + wasted
   diagnostic restart.
-- `test-run!` — full traced+diagnosed run; refreshes the trace map.
+- `test-run!` — traced+diagnosed run; `ns-sym` nil = the WHOLE project in
+  one image eval (instrumentation paid once — F-3c1); refreshes the trace
+  map. `query-eval` surfaces evaluation errors as `{:error msg}` (F-3c2);
+  `query-references` scans every namespace (F-3c3).
 - `checkpoint!` — unit-of-work boundary (user-designed): deterministically
   normalizes every form changed since the last checkpoint (`slopp.normalize`,
   conservative kibit-style rules, node-level so inner formatting survives),

@@ -30,11 +30,15 @@
   "Run `test-ns`'s tests in the image with form-tracing (slopp.rt): the fn
   vars of `test-ns`'s dependency CLOSURE are observed (item 2 — not every
   store namespace), so the result maps each test to the forms it exercised.
-  `only` (a coll of plain test names) restricts which tests run.
+  `only` (a coll of plain test names) restricts which tests run. `test-ns`
+  may be a collection — whole-project verification in ONE eval (F-3c1).
   Returns {:summary {...} :trace {test-sym #{form-sym ...}}}."
   [handle store test-ns & {:keys [only]}]
-  (first (repl/eval! handle
-                     (format "(slopp.rt/traced-run '%s '%s '%s)"
-                             test-ns
-                             (vec (sort (store/ns-closure store test-ns)))
-                             (pr-str (some-> only vec))))))
+  (let [targets (if (coll? test-ns)                 ; F-3c1: union of closures
+                  (into #{} (mapcat #(store/ns-closure store %)) test-ns)
+                  (store/ns-closure store test-ns))]
+    (first (repl/eval! handle
+                       (format "(slopp.rt/traced-run '%s '%s '%s)"
+                               (if (coll? test-ns) (vec test-ns) test-ns)
+                               (vec (sort targets))
+                               (pr-str (some-> only vec)))))))
