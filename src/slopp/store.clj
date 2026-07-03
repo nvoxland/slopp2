@@ -185,6 +185,17 @@
                 store' (:namespaces store'))]
     [(update store' :deltas conj delta) delta]))
 
+(defn record-checkpoint
+  "Append a `:checkpoint` boundary delta — a unit-of-work marker in the
+  history. Returns [store' delta-id]."
+  [store label]
+  (let [[did store'] (gen-id store "d")]
+    [(update store' :deltas conj
+             (cond-> {:id did :parent (:id (last (:deltas store)))
+                      :op :checkpoint :ns '*session*}
+               label (assoc :label label)))
+     did]))
+
 (defn record-verification
   "Append a `:verify` delta recording a test-run result against `ns-sym` — 'what
   was proven green at this point' (C4, D5/D6 verification-provenance)."

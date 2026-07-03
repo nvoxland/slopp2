@@ -21,6 +21,7 @@
             [slopp.image :as image]
             [slopp.edit :as edit]
             [slopp.refactor :as refactor]
+            [slopp.normalize :as normalize]
             [slopp.db :as db]))
 
 (defn- start-spare!
@@ -438,6 +439,66 @@
     (swap! session update :store store/record-verification ns-sym summary)
     (persist-last! session)
     summary))
+
+(defn- forms-changed-since
+  "Ids of forms touched by deltas after `since-id` (nil = since the beginning)
+  that still exist in the store."
+  [store since-id]
+  (let [ds   (store/deltas store)
+        tail (if since-id
+               (rest (drop-while #(not= since-id (:id %)) ds))
+               ds)]
+    (->> tail
+         (mapcat (fn [d] (if (:form-id d) [(:form-id d)] (:form-ids d))))
+         distinct
+         (filter #(store/ns-of-form-id store %)))))
+
+(defn checkpoint!
+  "Mark a unit of work done: deterministically normalize every form changed
+  since the last checkpoint (slopp.normalize — conservative behavior-preserving
+  rewrites), commit the rewrites as ONE `:normalize` group delta, hot-reload +
+  re-verify them, then record a labeled `:checkpoint` boundary delta.
+  Returns {:checkpoint id :normalized n :rewrites [{:form :applied}] :test s}."
+  [session & {:keys [label]}]
+  (let [st       (:store @session)
+        changed  (forms-changed-since st (:checkpoint @session))
+        rewrites (vec (for [fid changed
+                            :let [e (store/form-by-id st fid)
+                                  {:keys [node applied]} (normalize/normalize-form (:node e))]
+                            :when (seq applied)]
+                        {:form-id fid
+                         :form    (symbol (str (store/ns-of-form-id st fid))
+                                          (str (or (:name e) (:id e))))
+                         :node    node
+                         :applied applied}))
+        summary
+        (when (seq rewrites)
+          (let [changeset   (into {} (map (juxt :form-id :node)) rewrites)
+                main-ns     (store/ns-of-form-id st (:form-id (first rewrites)))
+                [st' delta] (store/apply-changeset st :normalize main-ns changeset
+                                                   :prompt (or label "checkpoint normalization"))
+                touched     (distinct (map #(store/ns-of-form-id st' %) (keys changeset)))]
+            (swap! session assoc :store st')
+            (when-let [db (:db @session)] (db/persist! db st' delta touched))
+            (doseq [fid (keys changeset)]
+              (edit/hot-load-form! (:image @session) st' fid))
+            (let [per      (map (fn [r] (affected-tests session
+                                                        (symbol (namespace (:form r)))
+                                                        (symbol (name (:form r)))))
+                                rewrites)
+                  affected (when (not-any? nil? per)
+                             (vec (sort (distinct (apply concat per)))))
+                  s        (run-verification! session main-ns affected)]
+              (swap! session update :store store/record-verification main-ns s)
+              (persist-last! session)
+              s)))
+        [st2 cid] (store/record-checkpoint (:store @session) label)]
+    (swap! session assoc :store st2 :checkpoint cid)
+    (persist-last! session)
+    (cond-> {:checkpoint cid
+             :normalized (count rewrites)
+             :rewrites   (mapv #(select-keys % [:form :applied]) rewrites)}
+      summary (assoc :test summary))))
 
 (defn- rename-in-trace
   "Carry the observed test→form map across a rename (old qsym → new qsym)."

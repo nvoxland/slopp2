@@ -33,6 +33,13 @@ by convention it must not redefine code; redefinition belongs to edit ops).
   Use for every multi-form refactor — it avoids the mid-refactor red + wasted
   diagnostic restart.
 - `test-run!` — full traced+diagnosed run; refreshes the trace map.
+- `checkpoint!` — unit-of-work boundary (user-designed): deterministically
+  normalizes every form changed since the last checkpoint (`slopp.normalize`,
+  conservative kibit-style rules, node-level so inner formatting survives),
+  commits ONE `:normalize` group delta, hot-reloads + re-verifies affected
+  tests, records a labeled `:checkpoint` delta. Never rewrites silently
+  mid-edit — only at this explicit call. Add rules deliberately (they must be
+  provably behavior-preserving) and note them in the normalize ns.
 - `restart!` — agent-callable fresh image (D5 escape hatch).
 - `build!` — materialize `.clj` files (the C1/C6 explicit build).
 

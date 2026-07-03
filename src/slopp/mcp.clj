@@ -99,6 +99,9 @@
                                :new {:type "string"} :prompt {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "old" "new"]}}
+   {:name "checkpoint"
+    :description "Mark a unit of work done: deterministically normalize the forms changed since the last checkpoint (tracked :normalize delta, re-verified), and record a boundary in the history."
+    :inputSchema {:type "object" :properties {:label {:type "string"}}}}
    {:name "test_run"
     :description "Run a namespace's tests in the live image; record the result."
     :inputSchema {:type "object" :properties {:ns {:type "string"}} :required ["ns"]}}
@@ -184,6 +187,7 @@
                                                  (sym :new) :prompt (:prompt a))
                                     (select-keys [:error :renamed :test :affected :delta])
                                     (summarize (:verbose a))))
+      "checkpoint"        (text (api/checkpoint! session :label (:label a)))
       "test_run"          (text (api/test-run! session (sym :ns)))
       "restart"           (do (api/restart! session) (text "restarted"))
       "build"             (text (str "built at " (api/build! session (:dir a))))
