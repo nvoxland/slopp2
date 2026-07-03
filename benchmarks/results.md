@@ -233,3 +233,11 @@ THE CROSSOVER, MEASURED:
 New (minor) finding N1: effectful-vars doesn't propagate effects across
 namespaces (a !-named callee in another ns should count as an effectful
 anchor); process-order! showed :effectful? false.
+| 2026-07-03 | 8e46d01 | calculator | 2 | 11 | 204 | 725 | 717 |
+| 2026-07-03 | 8e46d01 | inventory | 1 | 7 | 66 | 345 | 375 |
+| 2026-07-03 | 8e46d01 | wordstats | 1 | 8 | 80 | 427 | 493 |
+
+Note (2026-07-03, 8e46d01): the wall collapse vs 66c30c0 (calculator
+1316->204ms, wordstats 1277->80ms) is D5.1 — deliberate TDD reds no longer
+pay a fresh-image restart + re-run; they return {:diagnosis :genuine} from
+the single run. inventory (no reds in script) stays flat, as expected.
