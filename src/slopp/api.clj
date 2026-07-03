@@ -11,6 +11,7 @@
   the live image from it. Without `:dir` the session is ephemeral (tests,
   scratch)."
   (:require [clojure.java.io :as io]
+            [clojure.set :as set]
             [clojure.string :as str]
             [rewrite-clj.node :as n]
             [slopp.store :as store]
@@ -19,6 +20,7 @@
             [slopp.repl :as repl]
             [slopp.image :as image]
             [slopp.edit :as edit]
+            [slopp.refactor :as refactor]
             [slopp.db :as db]))
 
 (defn open!
@@ -90,7 +92,7 @@
     (when id
       (filter (fn [d]
                 (or (= id (:form-id d))
-                    (and (= :ingest (:op d)) (some #{id} (:form-ids d)))))
+                    (some #{id} (:form-ids d))))
               (store/deltas st)))))
 
 (defn query-eval
@@ -199,6 +201,76 @@
     (swap! session update :store store/record-verification ns-sym summary)
     (persist-last! session)
     summary))
+
+(defn- rename-in-trace
+  "Carry the observed test→form map across a rename (old qsym → new qsym)."
+  [tmap qold qnew]
+  (into {}
+        (map (fn [[t forms]]
+               [(if (= t qold) qnew t)
+                (into #{} (map #(if (= % qold) qnew %)) forms)]))
+        tmap))
+
+(defn rename!
+  "Rename `ns-sym/old-name` to `new-name` everywhere: ONE coordinated delta over
+  the def + every reference across all namespaces (position-based via the index,
+  so shadowed locals are untouched — see slopp.refactor). Hot-reloads every
+  rewritten form, drops the old var (`ns-unmap`), re-verifies the affected
+  tests, and records the outcome. Returns {:delta :renamed :test :affected} or
+  {:error msg}."
+  [session ns-sym old-name new-name & {:keys [prompt]}]
+  (let [st   (:store @session)
+        qold (symbol (str ns-sym) (str old-name))
+        qnew (symbol (str ns-sym) (str new-name))]
+    (cond
+      (nil? (store/form-named st ns-sym old-name))
+      {:error (str "no form named " old-name " in " ns-sym)}
+
+      (store/form-named st ns-sym new-name)
+      {:error (str new-name " already exists in " ns-sym)}
+
+      :else
+      (let [changeset    (refactor/rename-changeset st ns-sym old-name new-name)
+            [st' delta]  (store/apply-changeset st :rename ns-sym changeset
+                                                :prompt prompt
+                                                :extra {:old old-name :new new-name})
+            touched-nses (distinct (map #(store/ns-of-form-id st' %) (keys changeset)))
+            ;; affected tests, judged against the PRE-rename trace map
+            changed-syms (into #{qold qnew}
+                               (keep (fn [id]
+                                       (let [e (store/form-by-id st' id)]
+                                         (when (:name e)
+                                           (symbol (str (store/ns-of-form-id st' id))
+                                                   (str (:name e)))))))
+                               (keys changeset))
+            tmap         (:test-map @session)
+            affected     (when (seq tmap)
+                           (let [hits (->> tmap
+                                           (keep (fn [[t forms]]
+                                                   (when (or (contains? changed-syms t)
+                                                             (seq (set/intersection forms changed-syms)))
+                                                     (if (= t qold) qnew t))))
+                                           sort vec)]
+                             (when (seq hits) hits)))]
+        (swap! session assoc :store st')
+        (swap! session update :test-map rename-in-trace qold qnew)
+        (when-let [db (:db @session)]
+          (db/persist! db st' delta touched-nses))
+        ;; hot-reload every rewritten form in its namespace; drop the old var
+        (let [image (:image @session)]
+          (doseq [id (keys changeset)
+                  :let [e   (store/form-by-id st' id)
+                        ens (store/ns-of-form-id st' id)]]
+            (repl/eval! image (format "(in-ns '%s)" ens))
+            (repl/eval! image (n/string (:node e))))
+          (repl/eval! image (format "(ns-unmap '%s '%s)" ns-sym old-name)))
+        (let [summary (run-verification! session ns-sym affected)]
+          (swap! session update :store store/record-verification ns-sym summary)
+          (persist-last! session)
+          {:delta    delta
+           :renamed  {:old qold :new qnew :forms (count changeset)}
+           :test     summary
+           :affected (or affected :all)})))))
 
 (defn build!
   "C1/C6 explicit build: materialize every namespace's current source to real

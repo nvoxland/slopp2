@@ -45,6 +45,12 @@
                   :properties {:ns {:type "string"} :name {:type "string"}
                                :source {:type "string"} :prompt {:type "string"}}
                   :required ["ns" "name" "source"]}}
+   {:name "edit_rename"
+    :description "Rename a form and every reference to it, across namespaces (one coordinated delta; shadow-safe)."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :old {:type "string"}
+                               :new {:type "string"} :prompt {:type "string"}}
+                  :required ["ns" "old" "new"]}}
    {:name "test_run"
     :description "Run a namespace's tests in the live image; record the result."
     :inputSchema {:type "object" :properties {:ns {:type "string"}} :required ["ns"]}}
@@ -71,6 +77,9 @@
       "edit_replace_form" (text (-> (api/edit-replace! session (sym :ns) (sym :name)
                                                        (:source a) :prompt (:prompt a))
                                     (select-keys [:error :warnings :test :affected :delta])))
+      "edit_rename"       (text (-> (api/rename! session (sym :ns) (sym :old)
+                                                 (sym :new) :prompt (:prompt a))
+                                    (select-keys [:error :renamed :test :affected :delta])))
       "test_run"          (text (api/test-run! session (sym :ns)))
       "restart"           (do (api/restart! session) (text "restarted"))
       "build"             (text (str "built at " (api/build! session (:dir a))))

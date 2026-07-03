@@ -100,6 +100,36 @@
              (update :deltas conj delta))
          delta]))))
 
+(defn ns-of-form-id
+  "The namespace whose elements contain the form with `id`, or nil."
+  [store id]
+  (some (fn [[ns-sym {:keys [elements]}]]
+          (when (some #(= id (:id %)) elements) ns-sym))
+        (:namespaces store)))
+
+(defn apply-changeset
+  "Coordinated multi-form edit (e.g. rename): replace several forms' nodes —
+  possibly across namespaces — as ONE delta. `changeset` = {form-id new-node}.
+  `extra` is merged into the delta (e.g. {:old .. :new ..}). Returns
+  [store' delta]."
+  [store op ns-sym changeset & {:keys [prompt extra]}]
+  (let [[did store'] (gen-id store "d")
+        delta (merge {:id did :parent (:id (last (:deltas store)))
+                      :op op :ns ns-sym
+                      :form-ids (vec (sort (keys changeset)))
+                      :prompt prompt}
+                     extra)
+        store' (reduce-kv
+                (fn [st ns-key {:keys [elements]}]
+                  (assoc-in st [:namespaces ns-key :elements]
+                            (mapv (fn [e]
+                                    (if-let [node (get changeset (:id e))]
+                                      (assoc e :node node :name (form-symbol node))
+                                      e))
+                                  elements)))
+                store' (:namespaces store'))]
+    [(update store' :deltas conj delta) delta]))
+
 (defn record-verification
   "Append a `:verify` delta recording a test-run result against `ns-sym` — 'what
   was proven green at this point' (C4, D5/D6 verification-provenance)."

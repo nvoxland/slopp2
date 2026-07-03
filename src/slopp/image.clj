@@ -6,9 +6,15 @@
             [slopp.repl :as repl]))
 
 (defn load-ns!
-  "Evaluate `ns-sym`'s current source (rendered from the store) into the image."
+  "Evaluate `ns-sym`'s current source (rendered from the store) into the image,
+  then mark it in `*loaded-libs*` — store namespaces have no classpath presence
+  (C1 no-disk), so without the mark a later `(:require ns-sym)` from another
+  store namespace would hit the classpath and fail."
   [handle store ns-sym]
   (repl/eval! handle (render/render-ns store ns-sym))
+  (repl/eval! handle
+              (format "(dosync (commute (deref #'clojure.core/*loaded-libs*) conj '%s))"
+                      ns-sym))
   nil)
 
 (defn test-run

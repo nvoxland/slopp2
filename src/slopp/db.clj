@@ -47,25 +47,29 @@
       conn)))
 
 (defn persist!
-  "Write one mutation atomically: the delta, its namespace's (full) current
-  element rows, and the id counter. Namespaces are small; rewriting one ns's
-  rows per edit keeps the write-through trivially correct."
-  [conn store delta]
-  (jdbc/with-transaction [tx conn]
-    (jdbc/execute! tx ["INSERT INTO deltas (id, op, ns, payload) VALUES (?,?,?,?)"
-                       (:id delta) (name (:op delta)) (str (:ns delta))
-                       (pr-str (dissoc delta :id :op :ns))])
-    (when-let [elems (get-in store [:namespaces (:ns delta) :elements])]
-      (jdbc/execute! tx ["DELETE FROM elements WHERE ns = ?" (str (:ns delta))])
-      (doseq [[pos e] (map-indexed vector elems)]
-        (jdbc/execute! tx ["INSERT INTO elements (ns,pos,kind,form_id,name,source)
-                            VALUES (?,?,?,?,?,?)"
-                           (str (:ns delta)) pos (name (:kind e)) (:id e)
-                           (some-> (:name e) str) (n/string (:node e))])))
-    (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('next-id', ?)
-                        ON CONFLICT(k) DO UPDATE SET v = excluded.v"
-                       (str (:next-id store))]))
-  nil)
+  "Write one mutation atomically: the delta, the (full) current element rows of
+  the namespaces it touched, and the id counter. Namespaces are small; rewriting
+  a ns's rows per edit keeps the write-through trivially correct. Multi-ns
+  mutations (e.g. a cross-ns rename) pass the touched `nses` explicitly."
+  ([conn store delta] (persist! conn store delta [(:ns delta)]))
+  ([conn store delta nses]
+   (jdbc/with-transaction [tx conn]
+     (jdbc/execute! tx ["INSERT INTO deltas (id, op, ns, payload) VALUES (?,?,?,?)"
+                        (:id delta) (name (:op delta)) (str (:ns delta))
+                        (pr-str (dissoc delta :id :op :ns))])
+     (doseq [ns-sym nses
+             :let [elems (get-in store [:namespaces ns-sym :elements])]
+             :when elems]
+       (jdbc/execute! tx ["DELETE FROM elements WHERE ns = ?" (str ns-sym)])
+       (doseq [[pos e] (map-indexed vector elems)]
+         (jdbc/execute! tx ["INSERT INTO elements (ns,pos,kind,form_id,name,source)
+                             VALUES (?,?,?,?,?,?)"
+                            (str ns-sym) pos (name (:kind e)) (:id e)
+                            (some-> (:name e) str) (n/string (:node e))])))
+     (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('next-id', ?)
+                         ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                        (str (:next-id store))]))
+   nil))
 
 (defn- parse-node
   "Re-parse one element's canonical serialization (its source text) back to its
