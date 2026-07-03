@@ -432,10 +432,10 @@
     {:error (str "no namespace " ns-sym " (create it first)")}))
 
 (defn test-run!
-  "Traced, diagnosed run of `ns-sym`'s tests; refreshes the test→form map and
-  records the result (C4)."
-  [session ns-sym]
-  (let [summary (diagnosed-run! session ns-sym nil)]
+  "Traced, diagnosed run of `ns-sym`'s tests (all, or just the plain names in
+  `:only`); refreshes the test→form map and records the result (C4)."
+  [session ns-sym & {:keys [only]}]
+  (let [summary (diagnosed-run! session ns-sym (seq only))]
     (swap! session update :store store/record-verification ns-sym summary)
     (persist-last! session)
     summary))

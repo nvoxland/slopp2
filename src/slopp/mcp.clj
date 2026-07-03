@@ -103,8 +103,11 @@
     :description "Mark a unit of work done: deterministically normalize the forms changed since the last checkpoint (tracked :normalize delta, re-verified), and record a boundary in the history."
     :inputSchema {:type "object" :properties {:label {:type "string"}}}}
    {:name "test_run"
-    :description "Run a namespace's tests in the live image; record the result."
-    :inputSchema {:type "object" :properties {:ns {:type "string"}} :required ["ns"]}}
+    :description "Run a namespace's tests (all, or just those named in `only`) in the live image; record the result."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"}
+                               :only {:type "array" :items {:type "string"}}}
+                  :required ["ns"]}}
    {:name "restart"
     :description "Restart the live image (D5 backstop); reload all forms."
     :inputSchema {:type "object" :properties {}}}
@@ -188,7 +191,8 @@
                                     (select-keys [:error :renamed :test :affected :delta])
                                     (summarize (:verbose a))))
       "checkpoint"        (text (api/checkpoint! session :label (:label a)))
-      "test_run"          (text (api/test-run! session (sym :ns)))
+      "test_run"          (text (api/test-run! session (sym :ns)
+                                               :only (some->> (:only a) (mapv symbol))))
       "restart"           (do (api/restart! session) (text "restarted"))
       "build"             (text (str "built at " (api/build! session (:dir a))))
       (throw (ex-info (str "unknown tool: " name) {})))))

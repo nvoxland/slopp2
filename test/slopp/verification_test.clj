@@ -50,6 +50,15 @@
             (finally (api/close! sess2)))))
       (finally (api/close! sess)))))
 
+(deftest test-run-only-targets-named-tests
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'vdemo target)
+      (let [r (api/test-run! sess 'vdemo :only ['add-t])]
+        (is (= 1 (:test r)))
+        (is (= 1 (:pass r))))
+      (finally (api/close! sess)))))
+
 (deftest red-is-cross-checked-on-a-fresh-image
   (let [sess (api/open!)]
     (try
