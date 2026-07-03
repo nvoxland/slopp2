@@ -122,6 +122,13 @@
                                :prompt {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "name"]}}
+   {:name "edit_revert"
+    :description "Revert a form to an earlier version of itself (default: previous; or a specific delta id from query_form_history). Verified and recorded like any write."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :name {:type "string"}
+                               :to {:type "string"} :prompt {:type "string"}
+                               :verbose {:type "boolean"}}
+                  :required ["ns" "name"]}}
    {:name "edit_group"
     :description "Apply several form writes as ONE atomic intent: all-or-nothing commit, one verification at the end. Use for multi-form refactors."
     :inputSchema {:type "object"
@@ -343,6 +350,11 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
       "ns_remove_require" (text (-> (api/remove-require! session (sym :ns) (sym :lib)
                                                          :prompt (:prompt a))
                                     (select-keys [:error :test :affected :delta])
+                                    (summarize (:verbose a))))
+      "edit_revert"       (text (-> (api/revert-form! session (sym :ns) (sym :name)
+                                                      :to (:to a) :prompt (:prompt a))
+                                    (select-keys [:error :conflict :warnings :test
+                                                  :affected :delta :ms])
                                     (summarize (:verbose a))))
       "edit_move"         (text (api/move-form! session (sym :ns) (sym :name)
                                                 :before (sym :before)

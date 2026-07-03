@@ -25,7 +25,8 @@
             [slopp.build :as build]
             [slopp.db :as db]))
 
-(declare run-verification! forms-changed-since query-outline)
+(declare run-verification! forms-changed-since query-outline
+         hot-load-all! fresh-image!)
 
 (defn- start-spare!
   "Kick off a background-warming spare image (D5 warm spare) if enabled."
@@ -43,6 +44,7 @@
          store   (or (some-> conn db/load-store) (store/empty-store))
          image   (repl/start!)
          session (atom {:store store :image image :db conn
+                        :persist-agent (agent nil)
                         :warm-spare? (boolean warm-spare?)})]
      (start-spare! session)
      (doseq [ns-sym (store/ns-dependency-order store)]     ; X3: deps first
@@ -54,17 +56,87 @@
   (repl/stop! (:image @session))
   (when-let [spare (:spare @session)]
     (repl/stop! @spare))                          ; reap even if still booting
+  (when-let [pa (:persist-agent @session)]
+    (await pa))                                   ; drain queued persists
   (when-let [^java.sql.Connection conn (:db @session)]
     (.close conn))
   nil)
 
+(def ^:dynamic *pre-commit-hook*
+  "Test seam (item 4): invoked between an op's hot-load and its commit CAS to
+  simulate a concurrent competitor deterministically. Never set in production."
+  nil)
+
+(defn- try-commit!
+  "CAS the session store from `base` (by identity) to `st'`. True iff won —
+  the heart of CRDT-aligned commits (item 4): no locks, losers rebase."
+  [session base st']
+  (let [[old _] (swap-vals! session
+                            (fn [s]
+                              (if (identical? (:store s) base)
+                                (assoc s :store st')
+                                s)))]
+    (identical? (:store old) base)))
+
+(defn- persist-async!
+  "Ordered write-through (C7 + item 4): persists queue on a per-session agent
+  in send order; element rows are derived from the session's CURRENT store at
+  execution time, so they can never regress under concurrent commits (the
+  delta row itself is the captured value). No-op for ephemeral sessions."
+  [session delta & [nses]]
+  (when (:db @session)
+    (send-off (:persist-agent @session)
+              (fn [_]
+                (try
+                  (let [{:keys [db store]} @session]
+                    (if nses
+                      (db/persist! db store delta nses)
+                      (db/persist! db store delta)))
+                  (catch Throwable _))
+                nil))))
+
 (defn- persist-last!
-  "Write-through (C7): land the store's newest delta (plus its namespace's
-  current elements) in the db, atomically. No-op for ephemeral sessions."
+  "Queue the store's newest delta for ordered persistence."
   [session]
-  (let [{:keys [db store]} @session]
-    (when db
-      (db/persist! db store (last (store/deltas store))))))
+  (persist-async! session (last (store/deltas (:store @session)))))
+
+(defn- rebased-write!
+  "Run a single-form write with an atomic rebasing commit (item 4, the
+  granularity dodge). The pure `transform` (store → {:store :delta ...} |
+  {:error}) runs INSIDE swap!, so concurrent different-form writes rebase and
+  land without locks or starvation; if the TARGET form itself changed since
+  this op began (`target-node`: store → CST node), the commit aborts with
+  {:conflict ...} — C5's MV-register semantics, Phase-1 face.
+  The compile gate runs once, before commit: the form's CONTENT (what the
+  image compiles) is invariant across rebases."
+  [session transform target-node target-desc & {:keys [load?] :or {load? true}}]
+  (let [base0 (:store @session)
+        orig  (some-> (target-node base0) n/string)
+        out0  (transform base0)]
+    (if (:error out0)
+      out0
+      (let [load-res (when load?
+                       (hot-load-all! session (:store out0)
+                                      [(:form-id (:delta out0))]))]
+        (if (:err load-res)
+          {:error (str "form failed to compile: " (:err load-res))}
+          (do (when *pre-commit-hook* (*pre-commit-hook*))
+              (let [res (volatile! nil)]
+                (swap! session update :store
+                       (fn [base]
+                         (if (not= orig (some-> (target-node base) n/string))
+                           (do (vreset! res
+                                        {:conflict {:form target-desc
+                                                    :reason "form changed concurrently — re-read and retry"}})
+                               base)
+                           (let [out (transform base)]
+                             (if (:error out)
+                               (do (vreset! res out) base)
+                               (do (vreset! res out) (:store out)))))))
+                (cond-> @res
+                  (and (nil? (:error @res)) (nil? (:conflict @res))
+                       (:healed load-res))
+                  (assoc :image-healed true)))))))))
 
 (defn- with-ms
   "Attach total op wall time (item 2 observability)."
@@ -432,36 +504,36 @@
   [session ns-sym nm new-source & {:keys [prompt]}]
   (let [t0 (System/nanoTime)
         pre-warned (set (map :var (edit/ns-warnings (:store @session) ns-sym)))
-        r (edit/replace-form (:store @session) ns-sym nm new-source :prompt prompt)]
-    (if (:error r)
+        r (rebased-write!
+           session
+           (fn [base] (edit/replace-form base ns-sym nm new-source :prompt prompt))
+           (fn [base] (:node (store/form-named base ns-sym nm)))
+           (symbol (str ns-sym) (str nm)))]
+    (if (or (:error r) (:conflict r))
       r
-      (let [load-res (hot-load-all! session (:store r) [(:form-id (:delta r))])]
-        (if (:err load-res)
-          {:error (str "form failed to compile: " (:err load-res))}
-          (let [_        (swap! session assoc :store (:store r))
-                _        (persist-last! session)      ; the :replace delta
-                qform    (symbol (str ns-sym) (str nm))
-                new-nm   (:name (store/form-by-id (:store r)
-                                                  (:form-id (:delta r))))
-                edited   (into #{qform}
-                               (when new-nm [(symbol (str ns-sym) (str new-nm))]))
-                affected (affected-tests session ns-sym nm)
-                untested (and (nil? affected) (seq (:test-map @session)))
-                summary  (run-verification! session ns-sym affected
-                                            :edited edited)
-                existing (count (filter (comp pre-warned :var) (:warnings r)))]
-            (swap! session update :store store/record-verification ns-sym summary)
-            (persist-last! session)                   ; the :verify delta
-            (with-ms
-              (cond-> {:delta    (:delta r)
-                       ;; T3: only NEW violations; pre-existing ones as a count
-                       :warnings (vec (remove (comp pre-warned :var) (:warnings r)))
-                       :test     summary
-                       :affected (or affected :all)}
-                (:healed load-res) (assoc :image-healed true)
-                (pos? existing)    (assoc :existing-warnings existing)
-                untested           (assoc :untested true))
-              t0)))))))
+      (let [_        (persist-last! session)          ; the :replace delta
+            qform    (symbol (str ns-sym) (str nm))
+            new-nm   (:name (store/form-by-id (:store r)
+                                              (:form-id (:delta r))))
+            edited   (into #{qform}
+                           (when new-nm [(symbol (str ns-sym) (str new-nm))]))
+            affected (affected-tests session ns-sym nm)
+            untested (and (nil? affected) (seq (:test-map @session)))
+            summary  (run-verification! session ns-sym affected
+                                        :edited edited)
+            existing (count (filter (comp pre-warned :var) (:warnings r)))]
+        (swap! session update :store store/record-verification ns-sym summary)
+        (persist-last! session)                       ; the :verify delta
+        (with-ms
+          (cond-> {:delta    (:delta r)
+                   ;; T3: only NEW violations; pre-existing ones as a count
+                   :warnings (vec (remove (comp pre-warned :var) (:warnings r)))
+                   :test     summary
+                   :affected (or affected :all)}
+            (:image-healed r) (assoc :image-healed true)
+            (pos? existing)   (assoc :existing-warnings existing)
+            untested          (assoc :untested true))
+          t0)))))
 
 (defn add-form!
   "Add a new top-level form to `ns-sym` (O1 base write): dialect gate, `:add`
@@ -478,50 +550,65 @@
       {:error (str nm " already exists in " ns-sym)}
 
       :else
-      (let [pre-warned (set (map :var (edit/ns-warnings (:store @session) ns-sym)))]
-        (if-let [[st' delta] (store/append-form (:store @session) ns-sym node
-                                                :prompt prompt)]
-          (let [load-res (hot-load-all! session st' [(:form-id delta)])]
-            (if (:err load-res)
-              {:error (str "form failed to compile: " (:err load-res))}
-              (do (swap! session assoc :store st')
-                  (persist-last! session)
-                  (let [edited   (if nm #{(symbol (str ns-sym) (str nm))} #{})
-                        affected (when nm (affected-tests session ns-sym nm))
-                        summary  (run-verification! session ns-sym affected
-                                                    :edited edited)
-                        all-w    (edit/ns-warnings (:store @session) ns-sym)
-                        existing (count (filter (comp pre-warned :var) all-w))]
-                    (swap! session update :store store/record-verification ns-sym summary)
-                    (persist-last! session)
-                    (with-ms
-                      (cond-> {:delta    delta
-                               ;; T3: only NEW violations; pre-existing as a count
-                               :warnings (vec (remove (comp pre-warned :var) all-w))
-                               :test     summary
-                               :affected (or affected :all)}
-                        (:healed load-res) (assoc :image-healed true)
-                        (pos? existing)    (assoc :existing-warnings existing))
-                      t0)))))
-          {:error (str "no namespace " ns-sym " (ingest it first)")})))))
+      (let [pre-warned (set (map :var (edit/ns-warnings (:store @session) ns-sym)))
+            r (rebased-write!
+               session
+               (fn [base]
+                 (cond
+                   (and nm (store/form-named base ns-sym nm))
+                   {:error (str nm " already exists in " ns-sym)}
+                   :else
+                   (if-let [[st' d] (store/append-form base ns-sym node
+                                                       :prompt prompt)]
+                     {:store st' :delta d}
+                     {:error (str "no namespace " ns-sym " (ingest it first)")})))
+               (fn [base] (when nm (:node (store/form-named base ns-sym nm))))
+               (symbol (str ns-sym) (str (or nm "anonymous"))))]
+        (if (or (:error r) (:conflict r))
+          r
+          (do (persist-last! session)
+              (let [edited   (if nm #{(symbol (str ns-sym) (str nm))} #{})
+                    affected (when nm (affected-tests session ns-sym nm))
+                    summary  (run-verification! session ns-sym affected
+                                                :edited edited)
+                    all-w    (edit/ns-warnings (:store @session) ns-sym)
+                    existing (count (filter (comp pre-warned :var) all-w))]
+                (swap! session update :store store/record-verification ns-sym summary)
+                (persist-last! session)
+                (with-ms
+                  (cond-> {:delta    (:delta r)
+                           ;; T3: only NEW violations; pre-existing as a count
+                           :warnings (vec (remove (comp pre-warned :var) all-w))
+                           :test     summary
+                           :affected (or affected :all)}
+                    (:image-healed r) (assoc :image-healed true)
+                    (pos? existing)   (assoc :existing-warnings existing))
+                  t0))))))))
 
 (defn delete-form!
   "Delete the form named `nm` from `ns-sym`: `:delete` delta, `ns-unmap` in the
   image, verification (tests that exercised it will go red — the honest signal
   if it was still referenced), provenance."
   [session ns-sym nm & {:keys [prompt]}]
-  (if-let [[st' delta] (store/remove-form (:store @session) ns-sym nm
-                                          :prompt prompt)]
-    (do (swap! session assoc :store st')
-        (persist-last! session)
-        (let [affected (affected-tests session ns-sym nm)]
-          (repl/eval! (:image @session) (format "(ns-unmap '%s '%s)" ns-sym nm))
-          (let [summary (run-verification! session ns-sym affected
-                                           :edited #{(symbol (str ns-sym) (str nm))})]
-            (swap! session update :store store/record-verification ns-sym summary)
-            (persist-last! session)
-            {:delta delta :test summary :affected (or affected :all)})))
-    {:error (str "no form named " nm " in " ns-sym)}))
+  (let [r (rebased-write!
+           session
+           (fn [base]
+             (if-let [[st' d] (store/remove-form base ns-sym nm :prompt prompt)]
+               {:store st' :delta d}
+               {:error (str "no form named " nm " in " ns-sym)}))
+           (fn [base] (:node (store/form-named base ns-sym nm)))
+           (symbol (str ns-sym) (str nm))
+           :load? false)]
+    (if (or (:error r) (:conflict r))
+      r
+      (do (persist-last! session)
+          (let [affected (affected-tests session ns-sym nm)]
+            (repl/eval! (:image @session) (format "(ns-unmap '%s '%s)" ns-sym nm))
+            (let [summary (run-verification! session ns-sym affected
+                                             :edited #{(symbol (str ns-sym) (str nm))})]
+              (swap! session update :store store/record-verification ns-sym summary)
+              (persist-last! session)
+              {:delta (:delta r) :test summary :affected (or affected :all)}))))))
 
 (defn- apply-group-step
   "Apply one edit-group step to a store VALUE. Returns {:store :delta :hot ...}
@@ -564,11 +651,12 @@
   (if (empty? steps)
     {:error "edit-group needs at least one step"}
     (let [t0 (System/nanoTime)
+          base0 (:store @session)
           pre-warned (into #{}
                            (mapcat (fn [ns-sym]
                                      (map :var (edit/ns-warnings (:store @session) ns-sym))))
                            (distinct (map :ns steps)))
-          [gid st0] (store/alloc-id (:store @session) "g")]
+          [gid st0] (store/alloc-id base0 "g")]
       (loop [st st0, remaining steps, deltas [], hots [], i 0]
         (if-let [step (first remaining)]
           (let [r (apply-group-step st gid prompt step)]
@@ -580,12 +668,16 @@
           (let [load-res (hot-load-all! session st
                                         (keep (fn [[k a]] (when (= :load k) a))
                                               hots))]
-            (if (:err load-res)
+            (cond
+              (:err load-res)
               {:error (str "group failed to compile: " (:err load-res))}
-              (let [_        (swap! session assoc :store st)
-                    db       (:db @session)
-                    _        (doseq [d deltas]
-                               (when db (db/persist! db st d)))
+
+              (not (try-commit! session base0 st))
+              {:conflict {:reason "store changed during multi-form op — retry"}}
+
+              :else
+              (let [_        (doseq [d deltas]
+                               (persist-async! session d))
                     image    (:image @session)
                     _        (doseq [[kind a b] hots]
                                (when (= :unmap kind)
@@ -671,12 +763,14 @@
     {:error (str "no form named " before " in " ns-sym)}
 
     :else
-    (if-let [[st' delta] (store/move-form (:store @session) ns-sym nm before
-                                          :prompt prompt)]
-      (do (swap! session assoc :store st')
-          (persist-last! session)
-          {:delta delta :moved {:form nm :before before}})
-      {:error (str "cannot move " nm)})))
+    (let [base0 (:store @session)]
+      (if-let [[st' delta] (store/move-form base0 ns-sym nm before
+                                            :prompt prompt)]
+        (if-not (try-commit! session base0 st')
+          {:conflict {:reason "store changed concurrently — retry"}}
+          (do (persist-last! session)
+              {:delta delta :moved {:form nm :before before}}))
+        {:error (str "cannot move " nm)}))))
 
 (defn test-run!
   "Traced, diagnosed run of `ns-sym`'s tests (all, or just the plain names in
@@ -739,8 +833,9 @@
                 touched     (distinct (map #(store/ns-of-form-id st' %) (keys changeset)))]
             (when-let [err (:err (hot-load-all! session st' (keys changeset)))]
               (throw (ex-info (str "normalization failed to compile: " err) {})))
-            (swap! session assoc :store st')
-            (when-let [db (:db @session)] (db/persist! db st' delta touched))
+            (when-not (try-commit! session st st')
+              (throw (ex-info "store changed during checkpoint — retry" {})))
+            (persist-async! session delta touched)
             (let [per      (map (fn [r] (affected-tests session
                                                         (symbol (namespace (:form r)))
                                                         (symbol (name (:form r)))))
@@ -762,14 +857,43 @@
                            :form (when-let [e (render/owner-form st* ns-sym
                                                                  (:row f) (:col f))]
                                    (symbol (str ns-sym) (str (or (:name e) (:id e))))))))
-        [st2 cid] (store/record-checkpoint (:store @session) label)]
-    (swap! session assoc :store st2 :checkpoint cid)
+        cid (let [v (volatile! nil)]
+              (swap! session
+                     (fn [sess-map]
+                       (let [[st2 c] (store/record-checkpoint (:store sess-map) label)]
+                         (vreset! v c)
+                         (assoc sess-map :store st2 :checkpoint c))))
+              @v)]
     (persist-last! session)
     (cond-> {:checkpoint cid
              :normalized (count rewrites)
              :rewrites   (mapv #(select-keys % [:form :applied]) rewrites)
              :lint       lint}
       summary (assoc :test summary))))
+
+(defn revert-form!
+  "One-call rollback (item 4): replace `nm` with an earlier version of itself —
+  by default the previous one, or the version at delta `:to` (see
+  query-form-history). Rides the standard replace pipeline, so the revert is
+  itself compile-gated, verified, and recorded provenance."
+  [session ns-sym nm & {:keys [to prompt]}]
+  (let [hist (query-form-history session ns-sym nm)]
+    (cond
+      (nil? hist)
+      {:error (str "no form named " nm " in " ns-sym)}
+
+      (< (count hist) 2)
+      {:error (str nm " has no earlier version to revert to")}
+
+      :else
+      (let [target (if to
+                     (first (filter #(= to (:delta %)) hist))
+                     (nth hist (- (count hist) 2)))]
+        (if-not target
+          {:error (str "no version of " nm " at delta " to)}
+          (edit-replace! session ns-sym nm (:source target)
+                         :prompt (or prompt
+                                     (str "revert to " (:delta target)))))))))
 
 (defn- rename-in-trace
   "Carry the observed test→form map across a rename (old qsym → new qsym)."
@@ -827,21 +951,21 @@
             ordered-ids  (into [def-id] (remove #{def-id} (keys changeset)))]
         (if-let [err (:err (hot-load-all! session st' ordered-ids))]
           {:error (str "rename failed to compile: " err)}
-          (do
-            (swap! session assoc :store st')
-            (swap! session update :test-map rename-in-trace qold qnew)
-            (when-let [db (:db @session)]
-              (db/persist! db st' delta touched-nses))
-            (repl/eval! (:image @session)
-                        (format "(ns-unmap '%s '%s)" ns-sym old-name))
-            (let [summary (run-verification! session ns-sym affected
-                                             :edited changed-syms)]
-              (swap! session update :store store/record-verification ns-sym summary)
-              (persist-last! session)
-              {:delta    delta
-               :renamed  {:old qold :new qnew :forms (count changeset)}
-               :test     summary
-               :affected (or affected :all)})))))))
+          (if-not (try-commit! session st st')
+            {:conflict {:reason "store changed during rename — retry"}}
+            (do
+              (swap! session update :test-map rename-in-trace qold qnew)
+              (persist-async! session delta touched-nses)
+              (repl/eval! (:image @session)
+                          (format "(ns-unmap '%s '%s)" ns-sym old-name))
+              (let [summary (run-verification! session ns-sym affected
+                                               :edited changed-syms)]
+                (swap! session update :store store/record-verification ns-sym summary)
+                (persist-last! session)
+                {:delta    delta
+                 :renamed  {:old qold :new qnew :forms (count changeset)}
+                 :test     summary
+                 :affected (or affected :all)}))))))))
 
 (defn extract!
   "Phase-3 structural op: extract a UNIQUE subform of `from` into a new fn
@@ -875,22 +999,22 @@
             (if-let [err (:err (hot-load-all! session st3
                                               [(:form-id d1) (:form-id d3)]))]
               {:error (str "extract failed to compile: " err)}
-              (do (swap! session assoc :store st3)
-                  (when-let [db (:db @session)]
-                    (doseq [d [d1 d2 d3]] (db/persist! db st3 d)))
-                  (let [affected (affected-tests session ns-sym from)
-                        summary  (run-verification! session ns-sym affected
-                                                    :edited
-                                                    #{(symbol (str ns-sym) (str from))
-                                                      (symbol (str ns-sym) (str new-name))})]
-                    (swap! session update :store store/record-verification
-                           ns-sym summary)
-                    (persist-last! session)
-                    {:extracted {:new    (symbol (str ns-sym) (str new-name))
-                                 :params (:params plan)}
-                     :group    gid
-                     :test     summary
-                     :affected (or affected :all)})))))))))
+              (if-not (try-commit! session st st3)
+                {:conflict {:reason "store changed during extract — retry"}}
+                (do (doseq [d [d1 d2 d3]] (persist-async! session d))
+                    (let [affected (affected-tests session ns-sym from)
+                          summary  (run-verification! session ns-sym affected
+                                                      :edited
+                                                      #{(symbol (str ns-sym) (str from))
+                                                        (symbol (str ns-sym) (str new-name))})]
+                      (swap! session update :store store/record-verification
+                             ns-sym summary)
+                      (persist-last! session)
+                      {:extracted {:new    (symbol (str ns-sym) (str new-name))
+                                   :params (:params plan)}
+                       :group    gid
+                       :test     summary
+                       :affected (or affected :all)}))))))))))
 
 (defn build!
   "C1/C6 explicit build: materialize a runnable project under `dir` —

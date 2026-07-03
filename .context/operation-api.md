@@ -53,6 +53,22 @@ Every edit ends with `run-verification!` (affected-narrowed, diagnosed) and a
 `{:error msg}` on validation failure. **Keep return shapes tidy maps** —
 every op, `ingest!` included (`{:ns :forms}` / `{:error}`), returns one (F8).
 
+## Concurrency (item 4 — CRDT-aligned, no locks)
+
+Single-form writes (replace/add/delete/move) commit through
+`rebased-write!`: the pure store transform runs INSIDE `swap!`, so concurrent
+DIFFERENT-form writes rebase and all land (the granularity dodge, made real);
+if the target form itself changed since the op began → `{:conflict ...}`
+(C5's MV-register semantics, Phase-1 face). The compile gate runs once before
+commit (form content is invariant across rebases). Multi-form ops
+(group/rename/extract/checkpoint) guard with conflict-on-contention rather
+than rebasing. Persistence is ORDERED via a per-session agent
+(`persist-async!` — element rows derive from the current store at execution
+time, so they never regress); `close!` awaits the queue. The image needs no
+locking: all image work rides ONE nREPL session (per-eval serialization) and
+`traced-run`/hot-loads are single evals — keep multi-step image work inside
+one eval. `*pre-commit-hook*` is the deterministic test seam.
+
 ## `slopp.refactor` (rename mechanics)
 
 Position-based: clj-kondo gives resolved sites; **use `:name-row`/`:name-col`
