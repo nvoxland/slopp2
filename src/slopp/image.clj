@@ -3,7 +3,8 @@
   from the CRDT into the running JVM (no disk, C1), and run its tests there,
   recording the green/red result as provenance (D5/D6, C4)."
   (:require [slopp.render :as render]
-            [slopp.repl :as repl]))
+            [slopp.repl :as repl]
+            [slopp.store :as store]))
 
 (defn load-ns!
   "Evaluate `ns-sym`'s current source (rendered from the store) into the image,
@@ -26,13 +27,14 @@
   (first (repl/eval! handle (format "(clojure.test/run-tests '%s)" ns-sym))))
 
 (defn traced-test-run
-  "Run `test-ns`'s tests in the image with form-tracing (slopp.rt): every store
-  namespace's fn vars are observed, so the result maps each test to the forms it
-  exercised. `only` (a coll of plain test names) restricts which tests run.
+  "Run `test-ns`'s tests in the image with form-tracing (slopp.rt): the fn
+  vars of `test-ns`'s dependency CLOSURE are observed (item 2 — not every
+  store namespace), so the result maps each test to the forms it exercised.
+  `only` (a coll of plain test names) restricts which tests run.
   Returns {:summary {...} :trace {test-sym #{form-sym ...}}}."
   [handle store test-ns & {:keys [only]}]
   (first (repl/eval! handle
                      (format "(slopp.rt/traced-run '%s '%s '%s)"
                              test-ns
-                             (vec (keys (:namespaces store)))
+                             (vec (sort (store/ns-closure store test-ns)))
                              (pr-str (some-> only vec))))))

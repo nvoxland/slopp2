@@ -211,6 +211,19 @@
             :when (contains? (:namespaces store) lib)]
         lib))))
 
+(defn ns-closure
+  "`ns-sym` plus every store namespace it transitively requires — the scope a
+  test run in `ns-sym` can reach (item 2: instrumenting ALL namespaces made
+  per-write verification cost grow with total store size)."
+  [store ns-sym]
+  (loop [seen #{} frontier [ns-sym]]
+    (if-let [n (first frontier)]
+      (if (seen n)
+        (recur seen (subvec frontier 1))
+        (recur (conj seen n)
+               (into (subvec frontier 1) (ns-requires store n))))
+      seen)))
+
 (defn ns-dependency-order
   "Every store namespace, dependencies first (X3): image loads MUST use this —
   a plain (keys (:namespaces store)) goes hash-ordered past 8 entries, which

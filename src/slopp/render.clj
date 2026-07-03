@@ -7,10 +7,23 @@
             [rewrite-clj.node :as n]
             [slopp.store :as store]))
 
+(def ^:private render-cache
+  "elements-vector -> rendered string (bounded). Every write renders the same
+  immutable elements several times (warnings pre/post, offsets, analysis) —
+  item 2: the repeats were measurable per-write wall."
+  (atom {}))
+
 (defn render-ns
-  "Render `ns-sym`'s current source as a string from the store."
+  "Render `ns-sym`'s current source as a string from the store. Memoized on
+  the (immutable) elements vector."
   [store ns-sym]
-  (apply str (map (comp n/string :node) (store/elements store ns-sym))))
+  (if-let [elements (store/elements store ns-sym)]
+    (or (get @render-cache elements)
+        (let [s (apply str (map (comp n/string :node) elements))]
+          (swap! render-cache
+                 (fn [c] (assoc (if (>= (count c) 32) {} c) elements s)))
+          s))
+    ""))
 
 (defn ns-path
   "The VFS path of a namespace's rendered file (also used by build! and as the

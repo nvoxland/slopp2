@@ -66,6 +66,13 @@
     (when db
       (db/persist! db store (last (store/deltas store))))))
 
+(defn- with-ms
+  "Attach total op wall time (item 2 observability)."
+  [m t0]
+  (if (map? m)
+    (assoc m :ms (quot (- (System/nanoTime) t0) 1000000))
+    m))
+
 (defn ingest!
   "The batch write for BRAND-NEW namespaces (W1, user decision): land a whole
   namespace's source in one call. Compile-gated like every write (the image
@@ -423,7 +430,8 @@
   exercise this form (D1), cross-checked on a fresh image if red (D5) — and
   record the outcome as provenance (C4)."
   [session ns-sym nm new-source & {:keys [prompt]}]
-  (let [pre-warned (set (map :var (edit/ns-warnings (:store @session) ns-sym)))
+  (let [t0 (System/nanoTime)
+        pre-warned (set (map :var (edit/ns-warnings (:store @session) ns-sym)))
         r (edit/replace-form (:store @session) ns-sym nm new-source :prompt prompt)]
     (if (:error r)
       r
@@ -444,21 +452,24 @@
                 existing (count (filter (comp pre-warned :var) (:warnings r)))]
             (swap! session update :store store/record-verification ns-sym summary)
             (persist-last! session)                   ; the :verify delta
-            (cond-> {:delta    (:delta r)
-                     ;; T3: only NEW violations; pre-existing ones as a count
-                     :warnings (vec (remove (comp pre-warned :var) (:warnings r)))
-                     :test     summary
-                     :affected (or affected :all)}
-              (:healed load-res) (assoc :image-healed true)
-              (pos? existing)    (assoc :existing-warnings existing)
-              untested           (assoc :untested true))))))))
+            (with-ms
+              (cond-> {:delta    (:delta r)
+                       ;; T3: only NEW violations; pre-existing ones as a count
+                       :warnings (vec (remove (comp pre-warned :var) (:warnings r)))
+                       :test     summary
+                       :affected (or affected :all)}
+                (:healed load-res) (assoc :image-healed true)
+                (pos? existing)    (assoc :existing-warnings existing)
+                untested           (assoc :untested true))
+              t0)))))))
 
 (defn add-form!
   "Add a new top-level form to `ns-sym` (O1 base write): dialect gate, `:add`
   delta, hot-reload into the image, verification, provenance. Returns
   {:delta :warnings :test :affected} or {:error msg}."
   [session ns-sym source & {:keys [prompt]}]
-  (let [{:keys [node error]} (edit/parse-form source)
+  (let [t0 (System/nanoTime)
+        {:keys [node error]} (edit/parse-form source)
         nm (some-> node store/form-symbol)]
     (cond
       error {:error error}
@@ -483,13 +494,15 @@
                         existing (count (filter (comp pre-warned :var) all-w))]
                     (swap! session update :store store/record-verification ns-sym summary)
                     (persist-last! session)
-                    (cond-> {:delta    delta
-                             ;; T3: only NEW violations; pre-existing as a count
-                             :warnings (vec (remove (comp pre-warned :var) all-w))
-                             :test     summary
-                             :affected (or affected :all)}
-                      (:healed load-res) (assoc :image-healed true)
-                      (pos? existing)    (assoc :existing-warnings existing))))))
+                    (with-ms
+                      (cond-> {:delta    delta
+                               ;; T3: only NEW violations; pre-existing as a count
+                               :warnings (vec (remove (comp pre-warned :var) all-w))
+                               :test     summary
+                               :affected (or affected :all)}
+                        (:healed load-res) (assoc :image-healed true)
+                        (pos? existing)    (assoc :existing-warnings existing))
+                      t0)))))
           {:error (str "no namespace " ns-sym " (ingest it first)")})))))
 
 (defn delete-form!
@@ -550,7 +563,8 @@
   [session steps & {:keys [prompt]}]
   (if (empty? steps)
     {:error "edit-group needs at least one step"}
-    (let [pre-warned (into #{}
+    (let [t0 (System/nanoTime)
+          pre-warned (into #{}
                            (mapcat (fn [ns-sym]
                                      (map :var (edit/ns-warnings (:store @session) ns-sym))))
                            (distinct (map :ns steps)))
@@ -610,13 +624,15 @@
                 (let [all-w    (->> (map :ns steps) distinct
                                     (mapcat #(edit/ns-warnings (:store @session) %)))
                       existing (count (filter (comp pre-warned :var) all-w))]
-                  (cond-> {:group    gid
-                           :deltas   deltas
-                           :warnings (vec (remove (comp pre-warned :var) all-w))
-                           :test     summary
-                           :affected (or (not-empty affected) :all)}
-                    (:healed load-res) (assoc :image-healed true)
-                    (pos? existing)    (assoc :existing-warnings existing)))))))))))
+                  (with-ms
+                    (cond-> {:group    gid
+                             :deltas   deltas
+                             :warnings (vec (remove (comp pre-warned :var) all-w))
+                             :test     summary
+                             :affected (or (not-empty affected) :all)}
+                      (:healed load-res) (assoc :image-healed true)
+                      (pos? existing)    (assoc :existing-warnings existing))
+                    t0))))))))))
 
 (defn add-require!
   "F5: add one require clause to `ns-sym`'s ns form — structural edit through
@@ -668,7 +684,8 @@
   D5.1: reds are judged against the forms changed since the last verification;
   `:fresh true` restarts first for a guaranteed-faithful single run."
   [session ns-sym & {:keys [only fresh]}]
-  (let [st          (:store @session)
+  (let [t0          (System/nanoTime)
+        st          (:store @session)
         last-verify (:id (last (filter #(= :verify (:op %)) (store/deltas st))))
         edited      (into #{}
                           (keep (fn [id]
@@ -680,7 +697,7 @@
                                     :edited edited :fresh fresh)]
     (swap! session update :store store/record-verification ns-sym summary)
     (persist-last! session)
-    summary))
+    (with-ms summary t0)))
 
 (defn- forms-changed-since
   "Ids of forms touched by deltas after `since-id` (nil = since the beginning)
