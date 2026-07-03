@@ -1,0 +1,11 @@
+# Benchmark history
+
+Wall + token cost of building each sample app through the MCP surface
+(`clojure -M -m slopp.benchmark`; see `.context/dogfooding.md`).
+Rows are comparable only within the same script version (v).
+
+| date | sha | app | v | steps | wall ms | tok in | tok out |
+|---|---|---|---|---|---|---|---|
+| 2026-07-02 | 9a0caa3 | calculator | 1 | 12 | 2568 | 746 | 1051 |
+| 2026-07-02 | 9a0caa3 | inventory | 1 | 7 | 67 | 345 | 502 |
+| 2026-07-02 | 9a0caa3 | wordstats | 1 | 8 | 1254 | 427 | 542 |
