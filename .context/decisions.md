@@ -111,12 +111,12 @@ whole-file writes; slopp paid ~10–20 verified round trips), per-write
 verification wall (kondo re-runs now memo-cached ✅), schema guessing (arg
 aliases + validation messages ✅), redundant test_runs (SKILL guidance ✅).
 Correctness/safety all held: rename flawless for every model, checkpoint lint
-caught a real ordering mistake, zero wrong-behavior incidents. **Open
-strategic fork:** chase small-scale economics (stronger batching primitives /
-deferred-verification modes — touches the core loop) vs. accept the premium
-as the price of verified+tracked writes and target scale (next eval: 10+
-namespaces, too big to read whole). Needs a user call before core-loop
-changes. Data: benchmarks/results.md; report: projects/eval2/REPORT.md.
+caught a real ordering mistake, zero wrong-behavior incidents. **Fork partially resolved — W1 (user decision):** whole-namespace batch
+writes are allowed for BRAND-NEW namespaces only (never overwrite): `ingest`
+is that path, now with the standard verified-write tail (side benefit: it
+seeds the trace map, so narrowing works from the first edit). Deferred
+verification / whole-ns overwrite remain off the table. The scale side of the
+fork (10+-namespace eval, too big to read whole) is the next experiment. Data: benchmarks/results.md; report: projects/eval2/REPORT.md.
 
 ## B — benchmark/baseline findings
 
