@@ -40,14 +40,27 @@ and **token cost** (chars/4 of the JSON actually sent/received through
 
 ## Benchmark repeatability (standing rule, user-requested)
 
-Every eval-project dir under `projects/` carries two COMMITTED files (the
+Every eval-project dir under `projects/` carries three COMMITTED files (the
 only tracked things there — gitignore negations handle it):
-- **`SPEC.md`** — the exact task text given to agents + protocol + how to
-  regenerate the seed. Write it BEFORE launching agents.
-- **`RUNS.md`** — append-only history: date, model, setup (`slopp@<sha>` /
-  `files` / `go`), true tokens, duration, tool calls, payload metrics when
-  available, outcome/notes. Append a row per run, including reruns after
-  product changes — this is how benchmark movement stays visible over time.
+- **`SPEC.md`** — the exact task text given to agents + the VERBATIM harness
+  wrapper prompt (only ports/paths substituted) + how to regenerate the seed
+  + measurement sources. Write it BEFORE launching agents. The wrapper
+  shapes agent behavior as much as the task does — it must be reproducible.
+- **`RUNS.md`** — append-only history: date, model (**exact model id, not
+  an alias** — aliases drift as models update; a file-level note maps any
+  historical alias rows to the ids they resolved to at recording time),
+  setup (`slopp@<sha>` / `files` / `go`), true tokens, duration, tool
+  calls, payload metrics when available, outcome/notes. Append a row per
+  run, including reruns after product changes.
+- **`accept.sh`** — the executable acceptance check (`./accept.sh <port>`,
+  exit 0 = pass), run BY THE ORCHESTRATOR against each cohort's finished
+  store. Agent self-reports are never trusted; the same script scoring
+  every round is what makes outcomes comparable over time.
+
+Two comparability caveats to restate in results write-ups: cells are n=1
+(setup reproduces exactly; numbers carry single-run variance), and when
+reading server-side `/metrics`, filter to the agent's run window by
+timestamp — orchestrator acceptance probes pollute the tail.
 
 ## Conventional-workflow baselines (one-time rows)
 

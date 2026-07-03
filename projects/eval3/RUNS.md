@@ -1,5 +1,14 @@
 # Run history
 
+Model IDs: every row in this file ran through the same harness aliases,
+which at recording time (2026-07-03) resolve to:
+`haiku` = claude-haiku-4-5-20251001 · `sonnet` = claude-sonnet-5 ·
+`opus` = claude-opus-4-8. Future rows MUST state the exact model id (not
+just the alias) in the model column — aliases drift as models update.
+Acceptance: `./accept.sh <port>` (committed here) — the orchestrator runs
+it against each cohort's finished store; agent self-reports are never
+trusted.
+
 | date | model | setup | true tokens | duration | tool calls | outcome |
 |---|---|---|---|---|---|---|
 | 2026-07-03 | haiku | files (conventional) | 36,344 | 192s | 40 | green, 3 cycles |

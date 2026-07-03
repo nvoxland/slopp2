@@ -16,3 +16,4 @@ projects/*
 projects/*/*
 !projects/*/SPEC.md
 !projects/*/RUNS.md
+!projects/*/accept.sh
