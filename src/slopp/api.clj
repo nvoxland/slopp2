@@ -181,7 +181,10 @@
   (if (nil? affected)
     (diagnosed-run! session default-ns nil)
     (reduce (fn [acc [tns tsyms]]
-              (merge-with (fn [a b] (if (number? a) (+ a b) (or b a)))
+              (merge-with (fn [a b]
+                            (cond (number? a) (+ a b)
+                                  (and (sequential? a) (sequential? b)) (into (vec a) b)
+                                  :else (or b a)))
                           acc
                           (diagnosed-run! session tns (mapv (comp symbol name) tsyms))))
             {}

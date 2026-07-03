@@ -65,5 +65,11 @@
                                    :prompt "break it")]
           (is (= 1 (:fail (:test r))))
           (is (true? (:fresh-confirmed (:test r))))
-          (is (nil? (:staleness-detected (:test r))))))
+          (is (nil? (:staleness-detected (:test r))))
+          (testing "the WHY is in the result (F1) — not lost to image stdout"
+            (let [f (first (:failures (:test r)))]
+              (is (= 'vdemo/add-t (:test f)))
+              (is (= :fail (:type f)))
+              (is (re-find #"\(= 5 \(add 2 3\)\)" (:expected f)))
+              (is (= "(not (= 5 -1))" (:actual f)))))))
       (finally (api/close! sess)))))
