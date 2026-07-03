@@ -159,6 +159,9 @@
                                :only {:type "array" :items {:type "string"}}
                                :fresh {:type "boolean"}}
                   :required ["ns"]}}
+   {:name "help"
+    :description "The slopp workflow cheat-sheet: which tool for what, how to read results."
+    :inputSchema {:type "object" :properties {}}}
    {:name "restart"
     :description "Restart the live image (D5 backstop); reload all forms."
     :inputSchema {:type "object" :properties {}}}
@@ -169,8 +172,72 @@
                                :name {:type "string"}}
                   :required ["dir"]}}])
 
+(def ^:private ^:dynamic *hint*
+  "Optional one-line workflow hint, attached to map results (item 3)." nil)
+
 (defn- text [x]
-  {:content [{:type "text" :text (if (string? x) x (pr-str x))}]})
+  (let [x (if (and *hint* (map? x)) (assoc x :hint *hint*) x)]
+    {:content [{:type "text" :text (if (string? x) x (pr-str x))}]}))
+
+(def ^:private single-write-tools #{"edit_replace_form" "edit_add_form"})
+
+(def ^:private write-tools
+  (into single-write-tools
+        ["edit_delete_form" "edit_group" "edit_rename" "edit_extract"
+         "edit_move" "ns_add_require" "ns_remove_require" "ingest" "ns_create"
+         "checkpoint"]))
+
+(defn- track-hint!
+  "Session-scoped usage counters → an optional one-line hint (item 3: haiku's
+  66-vs-19 call gap was redundant test_runs + scattered single writes)."
+  [session tool args]
+  (let [s (::stats (swap! session update ::stats
+                          (fn [{:keys [test-runs singles last-ns]
+                                :or {test-runs 0 singles 0}}]
+                            (cond
+                              (= tool "test_run")
+                              {:test-runs (inc test-runs)
+                               :singles singles :last-ns last-ns}
+
+                              (single-write-tools tool)
+                              {:test-runs 0
+                               :singles (if (= (:ns args) last-ns) (inc singles) 1)
+                               :last-ns (:ns args)}
+
+                              (write-tools tool)
+                              {:test-runs 0 :singles 0 :last-ns nil}
+
+                              :else
+                              {:test-runs test-runs
+                               :singles singles :last-ns last-ns}))))]
+    (cond
+      (>= (:test-runs s) 3)
+      "every write already verifies (its result includes :test) — test_run is rarely needed"
+
+      (>= (:singles s) 4)
+      "several single-form writes in a row — batch related changes into ONE edit_group"
+
+      :else nil)))
+
+(def ^:private cheat-sheet
+  "slopp cheat-sheet
+ORIENT:  query_project (everything, one call) · query_search {pattern} (the grep)
+         query_symbol {ns name} (one form's source) · query_references {ns name}
+OBSERVE: query_eval {code} (your REPL: call anything; cannot redefine code)
+         query_observe {ns name code} (capture args/returns flowing through a fn)
+WRITE:   every write verifies immediately and returns :test — trust it.
+         edit_add_form / edit_replace_form {ns name source prompt}
+         edit_group {steps prompt}  <- SEVERAL forms for one reason: always batch
+         edit_rename {ns old new}   <- never rename by editing call sites
+         edit_extract {ns from form name} · edit_move {ns name before}
+         ingest {ns source}         <- whole NEW namespace in one call
+         ns_add_require / ns_remove_require  <- never hand-edit the ns form
+RULES:   every write must compile (define callees first; (declare x) for cycles)
+         red-first TDD = minimal fn + test in ONE edit_group, then replace
+READ RESULTS: {:ok true ...} terse green · :failures = why (expected/actual)
+         :diagnosis :genuine = real red, yours · :staleness-detected = healed
+         :warnings = fix with edit_rename per :suggest · :untested = add a test
+FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
 
 (defn- red? [t]
   (and t (pos? (+ (:fail t 0) (:error t 0)))))
@@ -292,6 +359,7 @@
       "test_run"          (text (api/test-run! session (sym :ns)
                                                :only (some->> (:only a) (mapv symbol))
                                                :fresh (:fresh a)))
+      "help"              (text cheat-sheet)
       "restart"           (do (api/restart! session) (text "restarted"))
       "build"             (text (api/build! session (:dir a)
                                             :main (some-> (:main a) symbol)
@@ -313,10 +381,13 @@
     "notifications/initialized" nil
     "tools/list" {:jsonrpc "2.0" :id id :result {:tools tools}}
     "tools/call" {:jsonrpc "2.0" :id id
-                  :result (try (call-tool session params)
-                               (catch Exception e
-                                 (assoc (text (str "error: " (ex-message e)))
-                                        :isError true)))}
+                  :result (binding [*hint* (track-hint! session
+                                                        (:name params)
+                                                        (:arguments params))]
+                            (try (call-tool session params)
+                                 (catch Exception e
+                                   (assoc (text (str "error: " (ex-message e)))
+                                          :isError true))))}
     "ping" {:jsonrpc "2.0" :id id :result {}}
     (when id
       {:jsonrpc "2.0" :id id

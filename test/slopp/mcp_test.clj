@@ -48,6 +48,28 @@
           (is (re-find #"\b6\b" (call sess "query_eval" {:code "(demo/add 2 3)"})))))
       (finally (api/close! sess)))))
 
+(deftest help-and-hints                                ; item 3: weak-model guidance
+  (let [sess (api/open!)]
+    (try
+      (testing "the help tool exists (agents invented the name twice)"
+        (let [h (call sess "help" {})]
+          (is (re-find #"edit_group" h))
+          (is (re-find #"query_project" h))))
+      (call sess "ingest" {:ns "hint" :source "(ns hint (:require [clojure.test :refer [deftest is]]))\n(defn f [x] x)\n(deftest f-t (is (= 1 (f 1))))\n"})
+      (testing "redundant test_runs earn a hint; a write resets the counter"
+        (call sess "test_run" {:ns "hint"})
+        (call sess "test_run" {:ns "hint"})
+        (let [r3 (call sess "test_run" {:ns "hint"})]
+          (is (re-find #"rarely needed" r3)))
+        (call sess "edit_replace_form" {:ns "hint" :name "f" :source "(defn f [x] (identity x))"})
+        (is (not (re-find #"rarely needed" (call sess "test_run" {:ns "hint"})))))
+      (testing "streaks of single-form writes suggest edit_group"
+        (dotimes [i 3]
+          (call sess "edit_add_form" {:ns "hint" :source (str "(defn g" i " [x] x)")}))
+        (let [r4 (call sess "edit_add_form" {:ns "hint" :source "(defn g3 [x] x)"})]
+          (is (re-find #"edit_group" r4))))
+      (finally (api/close! sess)))))
+
 (deftest rename-arg-forgiveness                        ; from the symmetric eval
   (let [sess (api/open!)]
     (try
