@@ -135,7 +135,7 @@
   nil)
 
 (defn -main [& _]
-  (let [session (api/open!)]
+  (let [session (api/open! {:warm-spare? true})]
     (try
       (serve! session (io/reader System/in) (io/writer System/out))
       (finally (api/close! session)))))

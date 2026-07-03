@@ -23,21 +23,32 @@
             [slopp.refactor :as refactor]
             [slopp.db :as db]))
 
+(defn- start-spare!
+  "Kick off a background-warming spare image (D5 warm spare) if enabled."
+  [session]
+  (when (:warm-spare? @session)
+    (swap! session assoc :spare (future (repl/start!)))))
+
 (defn open!
   "Start a session: the owned image + the store — loaded from `<dir>/.slopp/`
-  when `:dir` is given and it has history, empty otherwise."
+  when `:dir` is given and it has history, empty otherwise. `:warm-spare? true`
+  keeps a spare image warming in the background so restarts are near-instant."
   ([] (open! {}))
-  ([{:keys [dir]}]
+  ([{:keys [dir warm-spare?]}]
    (let [conn    (when dir (db/open! dir))
          store   (or (some-> conn db/load-store) (store/empty-store))
          image   (repl/start!)
-         session (atom {:store store :image image :db conn})]
+         session (atom {:store store :image image :db conn
+                        :warm-spare? (boolean warm-spare?)})]
+     (start-spare! session)
      (doseq [ns-sym (keys (:namespaces store))]
        (image/load-ns! image store ns-sym))
      session)))
 
 (defn close! [session]
   (repl/stop! (:image @session))
+  (when-let [spare (:spare @session)]
+    (repl/stop! @spare))                          ; reap even if still booting
   (when-let [^java.sql.Connection conn (:db @session)]
     (.close conn))
   nil)
@@ -107,12 +118,17 @@
 
 (defn- fresh-image!
   "Replace the image with a fresh process reloaded from the store — faithful by
-  construction (the D5 backstop)."
+  construction (the D5 backstop). With a warm spare, the swap avoids a JVM boot
+  on the critical path; the next spare starts warming immediately."
   [session]
-  (swap! session update :image repl/restart!)
-  (let [{:keys [store image]} @session]
-    (doseq [ns-sym (keys (:namespaces store))]
-      (image/load-ns! image store ns-sym))))
+  (let [{:keys [image spare]} @session
+        fresh (if spare @spare (repl/start!))]    ; deref: ready or nearly so
+    (repl/stop! image)
+    (swap! session assoc :image fresh :spare nil)
+    (start-spare! session)
+    (let [{:keys [store image]} @session]
+      (doseq [ns-sym (keys (:namespaces store))]
+        (image/load-ns! image store ns-sym)))))
 
 (defn restart!
   "D5 escape hatch: the agent-callable fresh-image restart."
