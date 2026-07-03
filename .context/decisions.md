@@ -154,6 +154,21 @@ the change here (same commit).
   P1 economics respected: JVMs are spun up on demand and reaped, not held
   per branch forever.
 
+- **P4-m5a — Storage inversion: the db is the journal of record
+  (user-directed re-architecture).** Toward per-agent servers on shared
+  storage: durable commits are now JOURNAL-FIRST — `db/append!` lands the
+  new deltas + touched element rows + id counter in ONE conditional
+  transaction iff the head still equals the commit's base; the in-memory
+  store is a CACHE that only ever trails the journal (`refresh-cache!`
+  advances it, never regresses). Losers refresh + rebase (same granularity
+  dodge, arbitrated by SQLite's cross-process writer serialization — WAL +
+  busy_timeout; "SQLite is single-process" was OUR in-memory-primary
+  assumption, not SQLite's limit). Ephemeral sessions keep the
+  starvation-free in-swap-transform commit. The async persist queue is
+  DELETED — the append IS the persist. Next: m5b multi-process protocol
+  (foreign-delta refresh into images), m5c per-agent servers with private
+  checkouts via `.mcp.json` stdio.
+
 ## H — host
 
 - **H1 — slopp itself is Clojure/JVM** (same runtime as image + tooling; no

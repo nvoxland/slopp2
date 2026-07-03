@@ -54,3 +54,16 @@
   `query-lineage` should match it (it matches `:form-id` and `:form-ids`).
 - `.slopp/` is gitignored; what users commit to VCS is an open Phase-4
   question (the delta DAG is meant to BE the history).
+
+## m5a: journal-first commits (storage inversion)
+
+Durable sessions commit through `db/append!`: new deltas + full element rows
+of the touched namespaces + the id counter, in ONE transaction, conditional
+on the journal head still matching the commit's base. On head-moved (or
+SQLITE_BUSY) the writer refreshes its cached store from the db
+(`api/refresh-cache!`, advance-only) and rebases. The in-memory store is a
+cache of the journal, never ahead of it; there is NO async persist queue —
+the append is the persist. `db/persist!` remains only for whole-store
+snapshots (branch creation). This is the substrate for multi-process
+servers sharing one store dir (m5b/c): SQLite WAL serializes writers across
+processes, and the same append-CAS protocol arbitrates them.

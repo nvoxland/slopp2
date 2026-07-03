@@ -27,6 +27,7 @@
     (let [conn (jdbc/get-connection
                 (jdbc/get-datasource {:dbtype "sqlite" :dbname (str f)}))]
       (jdbc/execute! conn ["PRAGMA journal_mode=WAL"])
+      (jdbc/execute! conn ["PRAGMA busy_timeout=5000"])
       (jdbc/execute! conn ["CREATE TABLE IF NOT EXISTS meta (
                               k TEXT PRIMARY KEY, v TEXT NOT NULL)"])
       (jdbc/execute! conn ["CREATE TABLE IF NOT EXISTS deltas (
@@ -70,6 +71,42 @@
                          ON CONFLICT(k) DO UPDATE SET v = excluded.v"
                         (str (:next-id store))]))
    nil))
+
+(defn append!
+  "Phase-a storage inversion: conditionally append `new-deltas` (+ the full
+  element rows of `nses`, + the id counter) in ONE transaction, iff the
+  journal head still equals `expected-head` (nil for an empty log). Returns
+  true on commit; false if the head moved or the db was busy — the caller
+  refreshes its cache and rebases. SQLite (WAL) serializes writers across
+  threads AND processes, which is what makes the shared-storage multi-server
+  split possible."
+  [conn store new-deltas nses expected-head]
+  (try
+    (jdbc/with-transaction [tx conn]
+      (let [head (:deltas/id (jdbc/execute-one!
+                              tx ["SELECT id FROM deltas ORDER BY seq DESC LIMIT 1"]))]
+        (when (not= head expected-head)
+          (throw (ex-info "journal head moved" {::head-moved true})))
+        (doseq [d new-deltas]
+          (jdbc/execute! tx ["INSERT INTO deltas (id, op, ns, payload) VALUES (?,?,?,?)"
+                             (:id d) (name (:op d)) (str (:ns d))
+                             (pr-str (dissoc d :id :op :ns))]))
+        (doseq [ns-sym nses
+                :let [elems (get-in store [:namespaces ns-sym :elements])]
+                :when elems]
+          (jdbc/execute! tx ["DELETE FROM elements WHERE ns = ?" (str ns-sym)])
+          (doseq [[pos e] (map-indexed vector elems)]
+            (jdbc/execute! tx ["INSERT INTO elements (ns,pos,kind,form_id,name,source)
+                                VALUES (?,?,?,?,?,?)"
+                               (str ns-sym) pos (name (:kind e)) (:id e)
+                               (some-> (:name e) str) (n/string (:node e))])))
+        (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('next-id', ?)
+                            ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                           (str (:next-id store))])
+        true))
+    (catch clojure.lang.ExceptionInfo e
+      (if (::head-moved (ex-data e)) false (throw e)))
+    (catch java.sql.SQLException _ false)))   ; busy/locked = contention
 
 (defn- parse-node
   "Re-parse one element's canonical serialization (its source text) back to its

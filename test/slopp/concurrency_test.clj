@@ -3,6 +3,7 @@
   Different-form concurrent writes both land; same-form contention surfaces a
   conflict (the Phase-1 face of C5's MV-register)."
   (:require [clojure.test :refer [deftest is testing]]
+            [clojure.java.shell]
             [slopp.store :as store]
             [slopp.api :as api]))
 
@@ -96,3 +97,30 @@
         (is (:error (api/revert-form! sess 'rv.core 'nope)))
         (is (:error (api/revert-form! sess 'rv.core 'f :to "d99999"))))
       (finally (api/close! sess)))))
+
+(deftest durable-concurrent-writers-share-the-journal   ; m5a storage inversion
+  (let [dir (str (System/getProperty "java.io.tmpdir")
+                 "/slopp-m5a-" (System/nanoTime))]
+    (try
+      (let [sess (api/open! {:dir dir})]
+        (try
+          (api/ingest! sess 'cc.core seed)
+          (let [results (doall
+                         (pmap (fn [nm]
+                                 (api/edit-replace! sess 'cc.core nm
+                                                    (format "(defn %s [x] (+ x %s))"
+                                                            nm (int (first (str nm))))
+                                                    :prompt (str "bump " nm)))
+                               '[a b c d]))]
+            (is (every? #(and (nil? (:error %)) (nil? (:conflict %))) results)
+                (pr-str (mapv #(select-keys % [:error :conflict]) results))))
+          (finally (api/close! sess))))
+      ;; the journal is the record: a fresh session sees all four writes
+      (let [sess (api/open! {:dir dir})]
+        (try
+          (let [src (api/query-source sess 'cc.core)]
+            (doseq [nm '[a b c d]]
+              (is (re-find (re-pattern (format "defn %s \\[x\\] \\(\\+ x" nm)) src)
+                  (str nm " lost from the journal"))))
+          (finally (api/close! sess))))
+      (finally (clojure.java.shell/sh "rm" "-rf" dir)))))
