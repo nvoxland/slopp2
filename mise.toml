@@ -1,0 +1,14 @@
+# Toolchain for slopp2 (Clojure on JVM).
+# `mise install` provisions everything below.
+[tools]
+# JVM — deps.edn targets Clojure 1.12; Temurin 21 is the LTS this repo develops against.
+java = "temurin-21"
+# Clojure CLI (clojure/clj) — used for the nREPL, test runner, and benchmark entrypoints.
+clojure = "1.12.5"
+# Babashka — required by clj-nrepl-eval (the clojure-eval workflow's nREPL client).
+babashka = "1.12"
+
+[env]
+# slopp.repl probes homebrew paths for the owned-image launcher before trusting
+# PATH; forcing the bare name makes child images inherit mise's pinned clojure.
+SLOPP_CLOJURE = "clojure"

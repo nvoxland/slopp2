@@ -40,5 +40,7 @@
 
 - deps: rewrite-clj, clj-kondo, nrepl, cheshire, next.jdbc, sqlite-jdbc,
   cognitect test-runner (`:test` alias).
-- Java 21, Clojure 1.12 (`clojure-bin` in `slopp.repl` is the homebrew
-  absolute path — known portability TODO).
+- Toolchain is pinned in `mise.toml` (Temurin 21 java, Clojure CLI 1.12.5,
+  babashka for `clj-nrepl-eval`) — `mise install` provisions it. Its `[env]`
+  sets `SLOPP_CLOJURE=clojure`, so owned images launch the mise-pinned CLI
+  via PATH instead of `slopp.repl`'s homebrew-path fallback.
