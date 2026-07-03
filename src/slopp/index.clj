@@ -59,12 +59,21 @@
 
 (defn- bang? [nm] (str/ends-with? (str nm) "!"))
 
+(defn test-definition?
+  "Is this var-definition a test (deftest)? Tests are exempt from the `!`
+  naming rule (T1) — they routinely exercise effectful code but are never
+  bang-named by convention."
+  [d]
+  (= 'clojure.test/deftest (:defined-by d)))
+
 (defn effect-violations
   "Vars whose `!`-naming disagrees with their computed effectfulness (D6). Each:
-  {:var node :effectful? bool :named-bang? bool :suggest new-name-string}."
+  {:var node :effectful? bool :named-bang? bool :suggest new-name-string}.
+  deftest vars are exempt (T1)."
   [analysis]
   (let [eff (effectful-vars analysis)]
     (for [d (:var-definitions analysis)
+          :when (not (test-definition? d))
           :let [n         (node (:ns d) (:name d))
                 effectful (contains? eff n)
                 named     (bang? (:name d))]

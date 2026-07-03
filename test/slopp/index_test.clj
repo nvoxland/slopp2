@@ -27,3 +27,14 @@
       (let [refs (index/references an 'demo 'tainted)]
         (is (= 1 (count refs)))
         (is (= 'caller (:from-var (first refs))))))))
+
+(deftest deftests-are-exempt-from-bang-rule            ; T1
+  (let [an (index/analyze
+            (str "(ns d (:require [clojure.test :refer [deftest is]]))\n"
+                 "(defn go! [a] (swap! a inc))\n"
+                 "(deftest go-test (is (= 1 (go! (atom 0)))))\n"))]
+    (testing "a test exercising effectful code is NOT a naming violation"
+      (is (not-any? #(= 'd/go-test (:var %)) (index/effect-violations an))))
+    (testing "but real violations still surface"
+      (let [an2 (index/analyze "(ns d)\n(defn go [a] (swap! a inc))\n")]
+        (is (some #(= 'd/go (:var %)) (index/effect-violations an2)))))))

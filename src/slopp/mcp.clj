@@ -30,6 +30,12 @@
                   :properties {:ns {:type "string"} :require {:type "string"}
                                :prompt {:type "string"}}
                   :required ["ns" "require"]}}
+   {:name "query_namespaces"
+    :description "List every namespace in the store with its form count (orient here first)."
+    :inputSchema {:type "object" :properties {}}}
+   {:name "query_outline"
+    :description "A namespace's shape at a glance: vars with arities, doc line, !-effect status, test-ness. Far cheaper than query_source."
+    :inputSchema {:type "object" :properties {:ns {:type "string"}} :required ["ns"]}}
    {:name "query_source"
     :description "Render a namespace's current source from the store (VFS read)."
     :inputSchema {:type "object" :properties {:ns {:type "string"}} :required ["ns"]}}
@@ -110,6 +116,8 @@
       "ns_add_require"    (text (-> (api/add-require! session (sym :ns) (:require a)
                                                       :prompt (:prompt a))
                                     (select-keys [:error :warnings :test :affected :delta])))
+      "query_namespaces"  (text (api/query-namespaces session))
+      "query_outline"     (text (api/query-outline session (sym :ns)))
       "query_source"      (text (api/query-source session (sym :ns)))
       "query_symbol"      (text (api/query-symbol session (sym :ns) (sym :name)))
       "query_references"  (text (vec (api/query-references session (sym :ns) (sym :name))))

@@ -127,6 +127,34 @@
   [session code]
   (repl/eval! (:image @session) code))
 
+(defn query-namespaces
+  "What exists? Every store namespace with its form count (orientation, T2)."
+  [session]
+  (let [st (:store @session)]
+    (vec (for [ns-sym (keys (:namespaces st))]
+           {:ns ns-sym :forms (count (store/forms st ns-sym))}))))
+
+(defn query-outline
+  "A namespace's shape at a glance (orientation, T2): every defined var with
+  arities, docstring first line, `!`-effect status, and test-ness — a fraction
+  of the tokens of reading the source."
+  [session ns-sym]
+  (let [st  (:store @session)
+        an  (index/analyze (render/render-ns st ns-sym))
+        eff (index/effectful-vars an)]
+    {:ns ns-sym
+     :forms
+     (vec (for [d (:var-definitions an)
+                :when (= ns-sym (:ns d))]
+            (cond-> {:name (:name d)}
+              (:fixed-arities d)      (assoc :arities (vec (sort (:fixed-arities d))))
+              (:varargs-min-arity d)  (assoc :varargs-min (:varargs-min-arity d))
+              (:doc d)                (assoc :doc (first (str/split-lines (:doc d))))
+              (index/test-definition? d) (assoc :test? true)
+              (and (not (index/test-definition? d))
+                   (contains? eff (symbol (str ns-sym) (str (:name d)))))
+              (assoc :effectful? true))))}))
+
 ;; --- verification (D1 tracing + D5 restart-as-diagnostic) ---
 
 (defn- green? [summary]
