@@ -38,6 +38,17 @@ and **token cost** (chars/4 of the JSON actually sent/received through
   results row; wall/token comparisons are only valid between rows with the
   same script version.
 
+## Benchmark repeatability (standing rule, user-requested)
+
+Every eval-project dir under `projects/` carries two COMMITTED files (the
+only tracked things there — gitignore negations handle it):
+- **`SPEC.md`** — the exact task text given to agents + protocol + how to
+  regenerate the seed. Write it BEFORE launching agents.
+- **`RUNS.md`** — append-only history: date, model, setup (`slopp@<sha>` /
+  `files` / `go`), true tokens, duration, tool calls, payload metrics when
+  available, outcome/notes. Append a row per run, including reruns after
+  product changes — this is how benchmark movement stays visible over time.
+
 ## Conventional-workflow baselines (one-time rows)
 
 The same three apps built in **Go by fresh sub-agents** (no context from the

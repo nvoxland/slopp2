@@ -5,10 +5,14 @@
 *.class
 .nrepl-port
 scratch/
-projects/
 sandbox/
 eval-templates/
 .idea
 *.iml
-projects
 notes
+# projects/ is scratch EXCEPT committed benchmark specs + run history
+projects/*
+!projects/*/
+projects/*/*
+!projects/*/SPEC.md
+!projects/*/RUNS.md
