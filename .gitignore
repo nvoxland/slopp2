@@ -8,3 +8,6 @@ scratch/
 projects/
 sandbox/
 eval-templates/
+.idea
+*.iml
+projects
