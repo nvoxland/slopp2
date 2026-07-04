@@ -192,6 +192,25 @@
     :description "Mark a unit of work done and CLOSE your episode: deterministically normalize the forms YOU changed since your last checkpoint (tracked :normalize delta, re-verified), record a labeled boundary. Pass your :agent label so parallel agents' checkpoints stay independent."
     :inputSchema {:type "object" :properties {:label {:type "string"}
                                               :agent {:type "string"}}}}
+   {:name "commit_point"
+    :description "Record a MILESTONE: runs the full checkpoint pipeline, then marks this spot in the branch's history with a human description (the important-checkpoint grain above turns). GREEN-GATED: refused while tests are red unless force=true (which records status :red honestly). Pass target=<past delta id> to retroactively mark an earlier spot."
+    :inputSchema {:type "object"
+                  :properties {:description {:type "string"}
+                               :agent {:type "string"}
+                               :force {:type "boolean"}
+                               :target {:type "string"}}
+                  :required ["description"]}}
+   {:name "query_commits"
+    :description "Milestones, newest first: description, status, human time, target delta id (plug targets into query_changes from/to for a between-milestones diff), and git-sha when exported."
+    :inputSchema {:type "object" :properties {}}}
+   {:name "git_export"
+    :description "Publish the latest commit point (or commit=<id>) to git: build! the project into dir, one git commit with the milestone description + slopp cross-link trailers, and record the sha as an :export delta. Refused if content changed after the commit point — commit_point first."
+    :inputSchema {:type "object"
+                  :properties {:dir {:type "string"}
+                               :commit {:type "string"}
+                               :main {:type "string"}
+                               :name {:type "string"}}
+                  :required ["dir"]}}
    {:name "test_run"
     :description "Run tests in the live image and record the result. No :ns = EVERY namespace's tests in one call (the full-project sweep). :only restricts to named tests; :fresh true restarts first for a guaranteed-faithful run."
     :inputSchema {:type "object"
@@ -274,7 +293,7 @@
   (into single-write-tools
         ["edit_delete_form" "edit_group" "edit_rename" "edit_extract"
          "edit_move" "ns_add_require" "ns_remove_require" "ingest" "ns_create"
-         "checkpoint"]))
+         "checkpoint" "commit_point"]))
 
 (defn- track-hint!
   "Session-scoped usage counters → an optional one-line hint (item 3: haiku's
@@ -293,7 +312,7 @@
                                :singles (if (= (:ns args) last-ns) (inc singles) 1)
                                :last-ns (:ns args)}
 
-                              (#{"edit_group" "checkpoint"} tool)
+                              (#{"edit_group" "checkpoint" "commit_point"} tool)
                               {:test-runs 0 :singles 0 :last-ns nil}
 
                               (write-tools tool)  ; other writes keep the streak
@@ -331,7 +350,9 @@ RULES:   every write must compile (define callees first; (declare x) for cycles)
 READ RESULTS: {:ok true ...} terse green · :failures = why (expected/actual)
          :diagnosis :genuine = real red, yours · :staleness-detected = healed
          :warnings = fix with edit_rename per :suggest · :untested = add a test
-FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
+FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
+         commit_point {description} <- MILESTONE: green-gated, the grain a
+         human diffs/reverts/publishes; git_export {dir} projects it to git")
 
 (defn- red? [t]
   (and t (pos? (+ (:fail t 0) (:error t 0)))))
@@ -366,7 +387,8 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
   (api/sync-with-journal! session)      ; m5b: absorb other servers' commits
   (when (and (:require-turns? @session)
              (contains? write-tools name)
-             (not= "checkpoint" name))  ; checkpoint closes work; always allowed
+             ;; checkpoint/commit_point CLOSE work; always allowed
+             (not (#{"checkpoint" "commit_point"} name)))
     (let [agent (:agent arguments)]
       (cond
         (nil? agent)
@@ -511,6 +533,15 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
                                       (summarize (:verbose a)))))
       "checkpoint"         (text (api/checkpoint! session :label (:label a)
                                                   :agent (:agent a)))
+      "commit_point"       (text (api/commit-point! session (:description a)
+                                                    :agent (:agent a)
+                                                    :force (:force a)
+                                                    :target (:target a)))
+      "query_commits"      (text (api/query-commits session))
+      "git_export"         (text (api/git-export! session (:dir a)
+                                                  :commit (:commit a)
+                                                  :main (some-> (:main a) symbol)
+                                                  :name (:name a)))
       "test_run"          (text (api/test-run! session
                                                (when (:ns a) (sym :ns))
                                                :only (some->> (:only a) (mapv symbol))

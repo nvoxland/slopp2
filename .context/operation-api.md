@@ -18,8 +18,9 @@ by convention it must not redefine code; redefinition belongs to edit ops).
 
 ## History views (the granularity ladder)
 
-turns → episodes → span diffs → forms, each row carrying the ids to drill
-into the next: `query-history {collapse true}` (turn brackets with the
+commit points → turns → episodes → span diffs → forms, each row carrying
+the ids to drill into the next: `query-commits` / `query-history {collapse
+true}` (COMMIT rows with description + status; turn brackets with the
 verbatim intent + nested episode rows; `:contains` searches turn INTENTS,
 not just episode labels) → `query-changes {:from/:to | :agent}` (net
 `:was`/`:now` per form + red/green arc) → `query-lineage` /
@@ -56,6 +57,15 @@ never re-emitted as churn). EDN stays the agent-facing default.
   tests, records a labeled `:checkpoint` delta. Never rewrites silently
   mid-edit — only at this explicit call. Add rules deliberately (they must be
   provably behavior-preserving) and note them in the normalize ns.
+- `commit-point!` — MILESTONE (P4-m7): the checkpoint pipeline, then a
+  `:commit` marker at the result with a human `description`. Green-gated
+  (`:force` records `:status :red` honestly); `:target` = retroactive pure
+  marker. `query-commits` lists them (with `:git-sha` once exported);
+  commit `:target`s anchor query-changes `:from`/`:to` spans.
+- `git-export!` — slopp→git projection: `build!` + one git commit per
+  milestone (description + `slopp-commit:`/`slopp-target:` trailers) +
+  `:export` delta with the sha. Head-only; refuses when content follows the
+  commit point.
 - `restart!` — agent-callable fresh image (D5 escape hatch).
 - `build!` — materialize `.clj` files (the C1/C6 explicit build). With
   `:main` (qualified entry fn) it also emits the O4 native-binary recipe:

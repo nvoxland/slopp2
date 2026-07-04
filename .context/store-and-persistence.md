@@ -51,7 +51,10 @@
 - Delta payloads must stay plain EDN data (no CST nodes, no objects).
 - If you add a delta op with a new key, nothing else is needed for
   persistence (payload column is schemaless) — but decide whether
-  `query-lineage` should match it (it matches `:form-id` and `:form-ids`).
+  `query-lineage` should match it (it matches `:form-id` and `:form-ids`),
+  and add no-content marker ops to `replay-delta`'s marker case (else
+  foreign-journal sync falls through to a full reload). `:commit`/`:export`
+  (P4-m7 milestones) are markers.
 - `.slopp/` is gitignored; what users commit to VCS is an open Phase-4
   question (the delta DAG is meant to BE the history).
 

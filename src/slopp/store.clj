@@ -300,6 +300,32 @@
                agent (assoc :agent agent)))
      did]))
 
+(defn record-commit
+  "Append a `:commit` MILESTONE marker (P4-m7) — a named pointer at `target`
+  (a delta id, normally the just-checkpointed head) with a human-facing
+  `description`. The important-checkpoint grain above turns; git's annotated
+  tag, inside the journal. Returns [store' delta]."
+  [store description & {:keys [agent target status]}]
+  (let [[did store'] (gen-id store "d")
+        delta (cond-> {:id did :parent (:id (last (:deltas store)))
+                       :op :commit :ns '*session* :at (now-ms)
+                       :description description
+                       :target (or target (:id (last (:deltas store))))}
+                agent  (assoc :agent agent)
+                status (assoc :status status))]
+    [(update store' :deltas conj delta) delta]))
+
+(defn record-export
+  "Append an `:export` delta — commit point `commit-id` was published to git
+  as `sha` under `dir`. The slopp→git cross-link (the git side carries the
+  reverse link in its commit message). Returns [store' delta]."
+  [store commit-id sha dir]
+  (let [[did store'] (gen-id store "d")
+        delta {:id did :parent (:id (last (:deltas store)))
+               :op :export :ns '*session* :at (now-ms)
+               :commit commit-id :git-sha sha :dir dir}]
+    [(update store' :deltas conj delta) delta]))
+
 (defn record-turn
   "Append a turn marker (:turn-begin carries the VERBATIM user ask — the root
   intent of everything that follows; :turn-end closes the bracket, stable or
@@ -333,26 +359,26 @@
   [store d]
   (let [with-d (fn [st] (bump-next-id (update st :deltas conj d) d))]
     (case (:op d)
-      (:verify :checkpoint :merge :turn-begin :turn-end)
+      (:verify :checkpoint :merge :turn-begin :turn-end :commit :export)
       (with-d store)
 
       (:replace :rename :normalize)
       (with-d
-       (reduce-kv
-        (fn [st fid src]
-          (let [ns-sym (ns-of-form-id st fid)]
-            (if-not ns-sym
-              st                                  ; unknown form: ignore
-              (update-in st [:namespaces ns-sym :elements]
-                         (fn [elems]
-                           (mapv (fn [e]
-                                   (if (= fid (:id e))
-                                     (let [node (p/parse-string src)]
-                                       (assoc e :node node
-                                              :name (form-symbol node)))
-                                     e))
-                                 elems))))))
-        store (:sources d)))
+        (reduce-kv
+         (fn [st fid src]
+           (let [ns-sym (ns-of-form-id st fid)]
+             (if-not ns-sym
+               st                                  ; unknown form: ignore
+               (update-in st [:namespaces ns-sym :elements]
+                          (fn [elems]
+                            (mapv (fn [e]
+                                    (if (= fid (:id e))
+                                      (let [node (p/parse-string src)]
+                                        (assoc e :node node
+                                               :name (form-symbol node)))
+                                      e))
+                                  elems))))))
+         store (:sources d)))
 
       :add
       (let [ns-sym (:ns d)
@@ -361,35 +387,35 @@
         (if-not (get-in store [:namespaces ns-sym])
           nil                                     ; ns unknown → full reload
           (with-d
-           (update-in store [:namespaces ns-sym :elements]
-                      (fn [elems]
-                        (let [node      (p/parse-string src)
-                              needs-nl? (and (seq elems)
-                                             (not (str/ends-with?
-                                                   (n/string (:node (peek elems)))
-                                                   "\n")))]
-                          (cond-> elems
-                            needs-nl? (conj {:kind :sep :node (n/newlines 1)})
-                            true      (conj {:id fid :kind :form
-                                             :name (form-symbol node)
-                                             :node node}
-                                            {:kind :sep
-                                             :node (n/newlines 1)}))))))))
+            (update-in store [:namespaces ns-sym :elements]
+                       (fn [elems]
+                         (let [node      (p/parse-string src)
+                               needs-nl? (and (seq elems)
+                                              (not (str/ends-with?
+                                                    (n/string (:node (peek elems)))
+                                                    "\n")))]
+                           (cond-> elems
+                             needs-nl? (conj {:kind :sep :node (n/newlines 1)})
+                             true      (conj {:id fid :kind :form
+                                              :name (form-symbol node)
+                                              :node node}
+                                             {:kind :sep
+                                              :node (n/newlines 1)}))))))))
 
       :delete
       (let [ns-sym (:ns d)
             fid    (:form-id d)]
         (with-d
-         (update-in store [:namespaces ns-sym :elements]
-                    (fn [elems]
-                      (if-let [idx (first (keep-indexed
-                                           (fn [i e] (when (= fid (:id e)) i))
-                                           elems))]
-                        (let [drop-next? (and (< (inc idx) (count elems))
-                                              (= :sep (:kind (nth elems (inc idx)))))]
-                          (into (subvec elems 0 idx)
-                                (subvec elems (+ idx (if drop-next? 2 1)))))
-                        elems)))))
+          (update-in store [:namespaces ns-sym :elements]
+                     (fn [elems]
+                       (if-let [idx (first (keep-indexed
+                                            (fn [i e] (when (= fid (:id e)) i))
+                                            elems))]
+                         (let [drop-next? (and (< (inc idx) (count elems))
+                                               (= :sep (:kind (nth elems (inc idx)))))]
+                           (into (subvec elems 0 idx)
+                                 (subvec elems (+ idx (if drop-next? 2 1)))))
+                         elems)))))
 
       ;; :ingest / :move / anything unknown → full reload
       nil)))
@@ -512,178 +538,178 @@
                    " looks like a recreated fork/branch at the same"
                    " path/name — use a fresh path (or a new branch)")}
       (loop [st ours, dds (seq theirs-sfx), idmap idmap0, merged 0,
-           conflicts [], notes [], changed [], new-nses [], applied []]
-      (if-let [d (first dds)]
-        (let [ds        (rest dds)
-              op        (:op d)
-              done      (fn [st idmap merged conflicts notes changed new-nses applied]
-                          [st idmap merged conflicts notes changed new-nses applied])
-              [st idmap merged conflicts notes changed new-nses applied]
-              (case op
-                (:verify :checkpoint :merge)
-                (done st idmap merged conflicts notes changed new-nses applied)
+             conflicts [], notes [], changed [], new-nses [], applied []]
+        (if-let [d (first dds)]
+          (let [ds        (rest dds)
+                op        (:op d)
+                done      (fn [st idmap merged conflicts notes changed new-nses applied]
+                            [st idmap merged conflicts notes changed new-nses applied])
+                [st idmap merged conflicts notes changed new-nses applied]
+                (case op
+                  (:verify :checkpoint :merge)
+                  (done st idmap merged conflicts notes changed new-nses applied)
 
-                :ingest
-                (let [ns-sym (:ns d)]
-                  (if (get-in st [:namespaces ns-sym])
-                    (done st idmap merged conflicts
-                          (conj notes {:skipped :ingest :ns ns-sym
-                                       :reason "namespace exists on our side"})
-                          changed new-nses (conj applied (:id d)))
-                    (let [src (apply str (map #(str (get (:sources d) %) "\n")
-                                              (:form-ids d)))
-                          st' (tag-merged (ingest st ns-sym src :agent (:agent d))
-                                          (:id d))
-                          new-ids (into [] (keep :id) (elements st' ns-sym))]
-                      (done st' (merge idmap (zipmap (:form-ids d) new-ids))
-                            (inc merged) conflicts notes changed
-                            (conj new-nses ns-sym) (conj applied (:id d))))))
-
-                :add
-                (let [ns-sym (:ns d)
-                      fid    (:form-id d)
-                      src    (get (:sources d) fid)
-                      node   (p/parse-string src)
-                      nm     (form-symbol node)
-                      cur    (when nm (form-named st ns-sym nm))]
-                  (cond
-                    (and cur (= (n/string (:node cur)) src)) ; converged
-                    (done st (assoc idmap fid (:id cur)) merged conflicts notes
-                          changed new-nses (conj applied (:id d)))
-
-                    cur                                      ; name clash
-                    (done st idmap merged
-                          (conj conflicts {:form (symbol (str ns-sym) (str nm))
-                                           :ns ns-sym :delta (:id d)
-                                           :ours (n/string (:node cur))
-                                           :theirs src
-                                           :reason "both sides added this name"})
-                          notes changed new-nses applied)
-
-                    :else
-                    (if-let [[st' d'] (append-form st ns-sym node
-                                                   :prompt (:prompt d)
-                                                   :agent (:agent d))]
-                      (done (tag-merged st' (:id d))
-                            (assoc idmap fid (:form-id d'))
-                            (inc merged) conflicts notes
-                            (conj changed (:form-id d')) new-nses
-                            (conj applied (:id d)))
+                  :ingest
+                  (let [ns-sym (:ns d)]
+                    (if (get-in st [:namespaces ns-sym])
                       (done st idmap merged conflicts
-                            (conj notes {:skipped :add :reason "no namespace"
-                                         :ns ns-sym})
-                            changed new-nses (conj applied (:id d))))))
+                            (conj notes {:skipped :ingest :ns ns-sym
+                                         :reason "namespace exists on our side"})
+                            changed new-nses (conj applied (:id d)))
+                      (let [src (apply str (map #(str (get (:sources d) %) "\n")
+                                                (:form-ids d)))
+                            st' (tag-merged (ingest st ns-sym src :agent (:agent d))
+                                            (:id d))
+                            new-ids (into [] (keep :id) (elements st' ns-sym))]
+                        (done st' (merge idmap (zipmap (:form-ids d) new-ids))
+                              (inc merged) conflicts notes changed
+                              (conj new-nses ns-sym) (conj applied (:id d))))))
 
-                :replace
-                (let [ns-sym (:ns d)
-                      fid0   (:form-id d)
-                      fid    (get idmap fid0 fid0)
-                      src    (get (:sources d) fid0)
-                      cur    (form-by-id st fid)]
-                  (cond
-                    (nil? cur)                               ; deleted on our side
-                    (done st idmap merged
-                          (conj conflicts {:form (qform st ns-sym fid0 theirs)
-                                           :ns ns-sym :delta (:id d)
-                                           :ours nil :theirs src
-                                           :reason "we deleted it; they edited it"})
-                          notes changed new-nses applied)
+                  :add
+                  (let [ns-sym (:ns d)
+                        fid    (:form-id d)
+                        src    (get (:sources d) fid)
+                        node   (p/parse-string src)
+                        nm     (form-symbol node)
+                        cur    (when nm (form-named st ns-sym nm))]
+                    (cond
+                      (and cur (= (n/string (:node cur)) src)) ; converged
+                      (done st (assoc idmap fid (:id cur)) merged conflicts notes
+                            changed new-nses (conj applied (:id d)))
 
-                    (= (n/string (:node cur)) src)           ; converged
-                    (done st idmap merged conflicts notes changed new-nses
-                          (conj applied (:id d)))
+                      cur                                      ; name clash
+                      (done st idmap merged
+                            (conj conflicts {:form (symbol (str ns-sym) (str nm))
+                                             :ns ns-sym :delta (:id d)
+                                             :ours (n/string (:node cur))
+                                             :theirs src
+                                             :reason "both sides added this name"})
+                            notes changed new-nses applied)
 
-                    (and (touched fid) (not (contains? (set changed) fid)))
-                    (done st idmap merged
-                          (conj conflicts {:form (qform st ns-sym fid0 theirs)
-                                           :ns ns-sym :delta (:id d)
-                                           :ours (n/string (:node cur))
-                                           :theirs src
-                                           :reason "both sides edited this form"})
-                          notes changed new-nses applied)
+                      :else
+                      (if-let [[st' d'] (append-form st ns-sym node
+                                                     :prompt (:prompt d)
+                                                     :agent (:agent d))]
+                        (done (tag-merged st' (:id d))
+                              (assoc idmap fid (:form-id d'))
+                              (inc merged) conflicts notes
+                              (conj changed (:form-id d')) new-nses
+                              (conj applied (:id d)))
+                        (done st idmap merged conflicts
+                              (conj notes {:skipped :add :reason "no namespace"
+                                           :ns ns-sym})
+                              changed new-nses (conj applied (:id d))))))
 
-                    (nil? (:name cur))
-                    (done st idmap merged conflicts
-                          (conj notes {:skipped :replace :form fid
-                                       :reason "anonymous form"})
-                          changed new-nses (conj applied (:id d)))
+                  :replace
+                  (let [ns-sym (:ns d)
+                        fid0   (:form-id d)
+                        fid    (get idmap fid0 fid0)
+                        src    (get (:sources d) fid0)
+                        cur    (form-by-id st fid)]
+                    (cond
+                      (nil? cur)                               ; deleted on our side
+                      (done st idmap merged
+                            (conj conflicts {:form (qform st ns-sym fid0 theirs)
+                                             :ns ns-sym :delta (:id d)
+                                             :ours nil :theirs src
+                                             :reason "we deleted it; they edited it"})
+                            notes changed new-nses applied)
 
-                    :else
-                    (let [[st' _] (replace-node st ns-sym (:name cur)
-                                                (p/parse-string src)
-                                                :prompt (:prompt d)
-                                                :agent (:agent d))]
-                      (done (tag-merged st' (:id d)) idmap (inc merged)
-                            conflicts notes (conj changed fid) new-nses
-                            (conj applied (:id d))))))
+                      (= (n/string (:node cur)) src)           ; converged
+                      (done st idmap merged conflicts notes changed new-nses
+                            (conj applied (:id d)))
 
-                :delete
-                (let [ns-sym (:ns d)
-                      fid0   (:form-id d)
-                      fid    (get idmap fid0 fid0)
-                      cur    (form-by-id st fid)]
-                  (cond
-                    (nil? cur)                               ; converged
-                    (done st idmap merged conflicts notes changed new-nses
-                          (conj applied (:id d)))
+                      (and (touched fid) (not (contains? (set changed) fid)))
+                      (done st idmap merged
+                            (conj conflicts {:form (qform st ns-sym fid0 theirs)
+                                             :ns ns-sym :delta (:id d)
+                                             :ours (n/string (:node cur))
+                                             :theirs src
+                                             :reason "both sides edited this form"})
+                            notes changed new-nses applied)
 
-                    (touched fid)
-                    (done st idmap merged
-                          (conj conflicts {:form (qform st ns-sym fid0 theirs)
-                                           :ns ns-sym :delta (:id d)
-                                           :ours (n/string (:node cur)) :theirs nil
-                                           :reason "we edited it; they deleted it"})
-                          notes changed new-nses applied)
+                      (nil? (:name cur))
+                      (done st idmap merged conflicts
+                            (conj notes {:skipped :replace :form fid
+                                         :reason "anonymous form"})
+                            changed new-nses (conj applied (:id d)))
 
-                    :else
-                    (let [[st' _] (remove-form st ns-sym (:name cur)
-                                               :prompt (:prompt d)
-                                               :agent (:agent d))]
-                      (done (tag-merged st' (:id d)) idmap (inc merged)
-                            conflicts notes changed new-nses
-                            (conj applied (:id d))))))
+                      :else
+                      (let [[st' _] (replace-node st ns-sym (:name cur)
+                                                  (p/parse-string src)
+                                                  :prompt (:prompt d)
+                                                  :agent (:agent d))]
+                        (done (tag-merged st' (:id d)) idmap (inc merged)
+                              conflicts notes (conj changed fid) new-nses
+                              (conj applied (:id d))))))
 
-                (:rename :normalize)
+                  :delete
+                  (let [ns-sym (:ns d)
+                        fid0   (:form-id d)
+                        fid    (get idmap fid0 fid0)
+                        cur    (form-by-id st fid)]
+                    (cond
+                      (nil? cur)                               ; converged
+                      (done st idmap merged conflicts notes changed new-nses
+                            (conj applied (:id d)))
+
+                      (touched fid)
+                      (done st idmap merged
+                            (conj conflicts {:form (qform st ns-sym fid0 theirs)
+                                             :ns ns-sym :delta (:id d)
+                                             :ours (n/string (:node cur)) :theirs nil
+                                             :reason "we edited it; they deleted it"})
+                            notes changed new-nses applied)
+
+                      :else
+                      (let [[st' _] (remove-form st ns-sym (:name cur)
+                                                 :prompt (:prompt d)
+                                                 :agent (:agent d))]
+                        (done (tag-merged st' (:id d)) idmap (inc merged)
+                              conflicts notes changed new-nses
+                              (conj applied (:id d))))))
+
+                  (:rename :normalize)
                 ;; changeset ops are all-or-conflict: a partially applied
                 ;; rename would leave broken references
-                (let [srcs (:sources d)
-                      fids (map #(get idmap % %) (keys srcs))
-                      blocked (filter #(and (touched %)
-                                            (not (contains? (set changed) %)))
-                                      fids)]
-                  (if (seq blocked)
-                    (done st idmap merged
-                          (conj conflicts {:form (qform st (:ns d)
-                                                        (first blocked) theirs)
-                                           :ns (:ns d) :delta (:id d)
-                                           :theirs (pr-str (select-keys d [:old :new]))
-                                           :reason "their rename touches forms we edited"})
-                          notes changed new-nses applied)
-                    (let [changeset (into {}
-                                          (keep (fn [[fid0 src]]
-                                                  (let [fid (get idmap fid0 fid0)]
-                                                    (when (form-by-id st fid)
-                                                      [fid (p/parse-string src)]))))
-                                          srcs)
-                          [st' _] (apply-changeset st (:op d) (:ns d) changeset
-                                                   :prompt (:prompt d)
-                                                   :agent (:agent d)
-                                                   :extra (select-keys d [:old :new]))]
-                      (done (tag-merged st' (:id d)) idmap (inc merged)
-                            conflicts notes (into changed (keys changeset))
-                            new-nses (conj applied (:id d))))))
+                  (let [srcs (:sources d)
+                        fids (map #(get idmap % %) (keys srcs))
+                        blocked (filter #(and (touched %)
+                                              (not (contains? (set changed) %)))
+                                        fids)]
+                    (if (seq blocked)
+                      (done st idmap merged
+                            (conj conflicts {:form (qform st (:ns d)
+                                                          (first blocked) theirs)
+                                             :ns (:ns d) :delta (:id d)
+                                             :theirs (pr-str (select-keys d [:old :new]))
+                                             :reason "their rename touches forms we edited"})
+                            notes changed new-nses applied)
+                      (let [changeset (into {}
+                                            (keep (fn [[fid0 src]]
+                                                    (let [fid (get idmap fid0 fid0)]
+                                                      (when (form-by-id st fid)
+                                                        [fid (p/parse-string src)]))))
+                                            srcs)
+                            [st' _] (apply-changeset st (:op d) (:ns d) changeset
+                                                     :prompt (:prompt d)
+                                                     :agent (:agent d)
+                                                     :extra (select-keys d [:old :new]))]
+                        (done (tag-merged st' (:id d)) idmap (inc merged)
+                              conflicts notes (into changed (keys changeset))
+                              new-nses (conj applied (:id d))))))
 
-                :move
-                (done st idmap merged conflicts
-                      (conj notes {:skipped :move :ns (:ns d)
-                                   :reason "ordering is cosmetic; re-run edit_move if wanted"})
-                      changed new-nses (conj applied (:id d)))
+                  :move
+                  (done st idmap merged conflicts
+                        (conj notes {:skipped :move :ns (:ns d)
+                                     :reason "ordering is cosmetic; re-run edit_move if wanted"})
+                        changed new-nses (conj applied (:id d)))
 
                 ;; unknown op: never guess with someone's code
-                (done st idmap merged conflicts
-                      (conj notes {:skipped (:op d) :delta (:id d)})
-                      changed new-nses (conj applied (:id d))))]
-          (recur st ds idmap merged conflicts notes changed new-nses applied))
-        {:store st :merged merged :conflicts conflicts :notes notes
-         :changed-form-ids (vec (distinct changed)) :new-nses new-nses
-         :applied applied :id-map idmap :fork-point fork-point})))))
+                  (done st idmap merged conflicts
+                        (conj notes {:skipped (:op d) :delta (:id d)})
+                        changed new-nses (conj applied (:id d))))]
+            (recur st ds idmap merged conflicts notes changed new-nses applied))
+          {:store st :merged merged :conflicts conflicts :notes notes
+           :changed-form-ids (vec (distinct changed)) :new-nses new-nses
+           :applied applied :id-map idmap :fork-point fork-point})))))

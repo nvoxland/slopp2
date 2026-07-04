@@ -49,6 +49,13 @@ Server: `clojure -M -m slopp.mcp` (stdio) from the slopp repo.
    `checkpoint {label, agent}` — it tidies the forms you touched
    (deterministic, behavior-preserving rewrites), cleans up satisfied
    `(declare)`s, re-verifies, and marks the boundary in history.
+6. **Commit-point at MILESTONES.** When the work reaches a state the user
+   would call important — a feature ships, a version is done — call
+   `commit_point {description, agent}`: it checkpoints, then marks the spot
+   with your description. It is green-gated (red tests refuse it; `force:
+   true` records a red milestone honestly). `query_commits` lists
+   milestones; `git_export {dir}` publishes the latest one as a real git
+   commit.
 
 ## Choosing the right write tool
 
@@ -156,7 +163,8 @@ ns_add_require ns_remove_require · edit_add_form edit_replace_form
 edit_delete_form edit_subform edit_group edit_rename edit_extract
 edit_extract_ns edit_move edit_revert episode_revert ns_rename
 fix_declares · branch_create branch_switch branch_merge branch_delete
-merge_from · test_run checkpoint restart build help
+merge_from · test_run checkpoint commit_point query_commits git_export
+restart build help
 
 ## Shipping
 

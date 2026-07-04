@@ -11,6 +11,7 @@
   the live image from it. Without `:dir` the session is ephemeral (tests,
   scratch)."
   (:require [clojure.java.io :as io]
+            [clojure.java.shell :as shell]
             [clojure.set :as set]
             [clojure.string :as str]
             [rewrite-clj.node :as n]
@@ -451,6 +452,12 @@
                         ": " (:ops e) " ops, " (:forms e) " forms"
                         (when (:open? e) " (open)")
                         (when (:at e) (str "  @ " (:at e))))])
+                (:commit row)
+                (let [c (:commit row)]
+                  [(str "COMMIT \"" (:description c) "\""
+                        (when (:agent c) (str " [" (:agent c) "]"))
+                        (when (= :red (:status c)) "  (RED)")
+                        (when (:at c) (str "  @ " (:at c))))])
                 :else
                 [(str (:id row) " " (:op row)
                       (when (:agent row) (str " [" (:agent row) "]"))
@@ -567,22 +574,39 @@
                   claimed-eps (into #{}
                                     (mapcat #(get-in % [:turn :episodes]))
                                     turns)
-                  eps     (remove #(claimed-eps (:episode %)) eps)]
-              (->> (concat turns eps)
+                  eps     (remove #(claimed-eps (:episode %)) eps)
+                  ;; commit points: the MILESTONE grain above turns
+                  commits (vec (for [d ds :when (= :commit (:op d))]
+                                 {:commit
+                                  (cond-> {:id          (:id d)
+                                           :description (:description d)
+                                           :target      (:target d)
+                                           :at          (human-time (:at d))}
+                                    (:agent d)  (assoc :agent (:agent d))
+                                    (:status d) (assoc :status (:status d)))}))]
+              (->> (concat turns eps commits)
                    (sort-by #(- (get pos (or (get-in % [:episode :to])
                                              (get-in % [:episode :from])
                                              (get-in % [:turn :to])
-                                             (get-in % [:turn :from]))
+                                             (get-in % [:turn :from])
+                                             (get-in % [:commit :id]))
                                      0)))
                    (filter #(or (nil? contains)
-                                ;; turns match on what the USER said (intent,
-                                ;; user, agent, contained episode labels);
+                                ;; commits match their description; turns
+                                ;; match what the USER said (intent, user,
+                                ;; agent, contained episode labels);
                                 ;; episodes on label/agent
                                 (clojure.string/includes?
-                                 (if-let [t (:turn %)]
-                                   (clojure.string/join
-                                    " " (concat [(:intent t) (:user t) (:agent t)]
-                                                (map :label (:episodes t))))
+                                 (cond
+                                   (:commit %)
+                                   (str (get-in % [:commit :description]) " "
+                                        (get-in % [:commit :agent]))
+                                   (:turn %)
+                                   (let [t (:turn %)]
+                                     (clojure.string/join
+                                      " " (concat [(:intent t) (:user t) (:agent t)]
+                                                  (map :label (:episodes t)))))
+                                   :else
                                    (str (get-in % [:episode :label]) " "
                                         (get-in % [:episode :agent])))
                                  contains)))
@@ -1494,6 +1518,90 @@
       (seq declare-fixes) (assoc :declares-fixed declare-fixes)
       summary             (assoc :test summary))))
 
+(defn- status-at
+  "Verification status as of delta `at-id`: the last `:verify` delta at or
+  before it — :green / :red / :unknown (no verification on record)."
+  [store at-id]
+  (let [upto (reduce (fn [acc d]
+                       (let [acc (conj acc d)]
+                         (if (= at-id (:id d)) (reduced acc) acc)))
+                     [] (store/deltas store))
+        v    (last (filter #(= :verify (:op %)) upto))]
+    (if-let [r (:result v)]
+      (if (zero? (+ (:fail r 0) (:error r 0))) :green :red)
+      :unknown)))
+
+(defn commit-point!
+  "Record a MILESTONE (P4-m7): run the full checkpoint pipeline (normalize,
+  declare hygiene, verify) for `:agent`, then append a `:commit` marker
+  pointing at the resulting state with a human `description`. GREEN-GATED:
+  a red verification refuses the milestone (the checkpoint still stands —
+  fix and retry) unless `:force true`, which records `:status :red`
+  honestly. With `:target` (a past delta id) it is a pure retroactive
+  marker: no checkpoint runs, status is derived from the log at that spot."
+  [session description & {:keys [agent force target]}]
+  (let [mark! (fn [target status extra]
+                (let [v (volatile! nil)]
+                  (commit-appended!
+                   session
+                   (fn [base]
+                     (let [[st2 d] (store/record-commit base description
+                                                        :agent agent
+                                                        :target target
+                                                        :status status)]
+                       (vreset! v d)
+                       st2))
+                   [])
+                  (merge {:commit (:id @v) :target target :status status
+                          :description description}
+                         extra)))]
+    (cond
+      (str/blank? (str description))
+      {:error "a commit point needs a human-facing :description"}
+
+      target
+      (if (some #(= target (:id %)) (store/deltas (:store @session)))
+        (mark! target (status-at (:store @session) target) {})
+        {:error (str "no delta " target " in this branch's history")})
+
+      :else
+      (let [cp     (checkpoint! session :label description :agent agent)
+            head   (:id (last (store/deltas (:store @session))))
+            status (if-let [t (:test cp)]
+                     (if (zero? (+ (:fail t 0) (:error t 0))) :green :red)
+                     (status-at (:store @session) head))
+            status (if (= :unknown status) :green status)] ; nothing ever ran red
+        (if (and (= :red status) (not force))
+          {:error (str "verification is RED — milestone refused (your work is "
+                       "checkpointed; fix and retry, or :force true to record "
+                       "a red milestone honestly)")
+           :status :red :checkpoint (:checkpoint cp) :test (:test cp)}
+          (mark! head status {:checkpoint (:checkpoint cp)}))))))
+
+(defn query-commits
+  "Milestones, newest first:
+  [{:commit :description :target :status :agent :at :git-sha}]. `:git-sha`
+  joins the latest `:export` delta that published that commit point; commit
+  `:target` ids plug straight into query-changes :from/:to for
+  between-milestone diffs."
+  [session]
+  (let [ds      (store/deltas (:store @session))
+        exports (into {} (keep (fn [d] (when (= :export (:op d))
+                                         [(:commit d) d])))
+                      ds)]
+    (->> ds
+         (filter #(= :commit (:op %)))
+         reverse
+         (mapv (fn [d]
+                 (cond-> {:commit      (:id d)
+                          :description (:description d)
+                          :target      (:target d)
+                          :status      (:status d)
+                          :at          (human-time (:at d))}
+                   (:agent d)          (assoc :agent (:agent d))
+                   (exports (:id d))   (assoc :git-sha
+                                              (:git-sha (exports (:id d))))))))))
+
 (defn edit-subform!
   "Item 5 — paredit's invariant, agent-shaped: replace the UNIQUE structural
   occurrence of `match` inside form `form-name` with `new-src`
@@ -2353,3 +2461,60 @@
                      {:binary bin
                       :launcher "src/native/main.clj"
                       :script   "build-native.sh"})))))))
+
+(defn git-export!
+  "Publish a commit point to git (the slopp→git projection): build! the tree
+  into `dir`, `git init` if needed, and make ONE git commit whose message is
+  the milestone description plus slopp cross-link trailers; then record an
+  `:export` delta carrying the resulting sha. Only the LATEST state is
+  exportable — content deltas after the commit point → error (record a new
+  commit point first). `:commit` selects a specific commit point (default:
+  the most recent); `:main`/`:name` pass through to build!'s native recipe."
+  [session dir & {:keys [commit main] bin-name :name}]
+  (let [ds (store/deltas (:store @session))
+        c  (if commit
+             (first (filter #(and (= :commit (:op %)) (= commit (:id %))) ds))
+             (last (filter #(= :commit (:op %)) ds)))]
+    (cond
+      (nil? c)
+      {:error (if commit
+                (str "no commit point " commit " in this branch's history")
+                "no commit points yet — record one with commit_point first")}
+
+      (seq (->> ds
+                (drop-while #(not= (:id c) (:id %)))
+                rest
+                (filter #(contains? content-ops (:op %)))))
+      {:error (str "content changes exist after commit point " (:id c)
+                   " — record a new commit point first")}
+
+      :else
+      (let [b (build! session dir :main main :name bin-name)]
+        (if (:error b)
+          b
+          (let [git (fn [& args]
+                      (apply shell/sh "git" (concat args [:dir dir])))]
+            (when-not (.exists (io/file dir ".git"))
+              (git "init" "-q"))
+            (git "add" "-A")
+            (let [msg (str (:description c)
+                           "\n\nslopp-commit: " (:id c)
+                           "\nslopp-target: " (:target c))
+                  cr  (git "-c" "user.name=slopp" "-c" "user.email=slopp@local"
+                           "commit" "-q" "-m" msg)]
+              (cond
+                (zero? (:exit cr))
+                (let [sha (str/trim (:out (git "rev-parse" "HEAD")))]
+                  (commit-appended!
+                   session
+                   #(first (store/record-export % (:id c) sha (str dir)))
+                   [])
+                  {:exported (:id c) :git-sha sha :dir (:built b)})
+
+                (re-find #"nothing to commit"
+                         (str (:out cr) (:err cr)))
+                {:unchanged true :commit (:id c)}
+
+                :else
+                {:error (str "git commit failed: "
+                             (str/trim (str (:err cr) " " (:out cr))))}))))))))
