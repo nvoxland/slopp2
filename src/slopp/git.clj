@@ -19,11 +19,16 @@
   a cache) — but once anything is PUSHED in, the pushed objects live only in
   the bare repo, which is then durable state."
   (:require [clojure.java.io :as io]
+            [clojure.set :as set]
             [clojure.string :as str]
             [next.jdbc :as jdbc]
+            [rewrite-clj.node :as n]
+            [rewrite-clj.parser :as p]
+            [slopp.api :as api]
             [slopp.build :as build]
             [slopp.db :as db]
-            [slopp.render :as render])
+            [slopp.render :as render]
+            [slopp.store :as store])
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
            [java.net InetSocketAddress]
            [java.nio.charset StandardCharsets]
@@ -32,9 +37,13 @@
            [org.eclipse.jgit.dircache DirCache DirCacheEntry]
            [org.eclipse.jgit.lib CommitBuilder Constants FileMode ObjectId
             PersonIdent Repository]
+           [org.eclipse.jgit.revwalk RevCommit RevSort RevWalk]
            [org.eclipse.jgit.storage.file FileRepositoryBuilder]
-           [org.eclipse.jgit.transport PacketLineOut
-            RefAdvertiser$PacketLineOutRefAdvertiser UploadPack]))
+           [org.eclipse.jgit.transport PacketLineOut PreReceiveHook
+            ReceiveCommand ReceiveCommand$Result ReceivePack
+            RefAdvertiser$PacketLineOutRefAdvertiser UploadPack]
+           [org.eclipse.jgit.treewalk TreeWalk]
+           [org.eclipse.jgit.treewalk.filter TreeFilter]))
 
 ;; ---------------------------------------------------------------------------
 ;; repo + mapping table
@@ -294,6 +303,251 @@
       {:refs refs})))
 
 ;; ---------------------------------------------------------------------------
+;; import: git push → slopp (M3)
+;;
+;; The net content change lands as ingests (new files) + ONE verified edit
+;; group; each incoming commit is preserved as a :commit marker carrying its
+;; original sha. Conservative by design — git is a guest writer, and guests
+;; don't get the ambiguous cases (anonymous forms, ns-decl edits, deletions
+;; of whole files): those reject with the reason on the pusher's terminal.
+
+(defn- path->ns
+  "src/gi/core.clj → gi.core; nil when the path isn't importable source."
+  [path]
+  (when-let [[_ p] (re-matches #"src/(.+)\.clj" (str path))]
+    (symbol (-> p (str/replace "/" ".") (str/replace "_" "-")))))
+
+(defn- blob-str [^Repository repo oid]
+  (String. (.getBytes (.open repo ^ObjectId oid)) StandardCharsets/UTF_8))
+
+(defn- tree-changes
+  "Net old→new file changes: [{:path :old <oid|nil> :new <oid|nil>}]."
+  [^Repository repo ^RevCommit oc ^RevCommit nc]
+  (let [tw   (doto (TreeWalk. repo) (.setRecursive true))
+        zero (ObjectId/zeroId)]
+    (.addTree tw (.getTree oc))
+    (.addTree tw (.getTree nc))
+    (.setFilter tw TreeFilter/ANY_DIFF)
+    (loop [out []]
+      (if (.next tw)
+        (let [o  (.getObjectId tw 0)
+              n' (.getObjectId tw 1)]
+          (recur (conj out {:path (.getPathString tw)
+                            :old  (when-not (= zero o) o)
+                            :new  (when-not (= zero n') n')})))
+        out))))
+
+(defn- source-forms
+  "Top-level sexpr-able forms of file text: [{:name sym|nil :source str}]."
+  [source]
+  (into []
+        (comp (filter n/sexpr-able?)
+              (map (fn [node] {:name   (store/form-symbol node)
+                               :source (n/string node)})))
+        (n/children (p/parse-string-all source))))
+
+(defn- file-steps
+  "Diff one MODIFIED file into edit-group steps against the current store.
+  Returns {:steps [...]} or {:error msg}."
+  [st ns-sym old-src new-src]
+  (let [olds      (source-forms old-src)
+        news      (source-forms new-src)
+        named-old (filter :name olds)
+        named-new (filter :name news)
+        old-m     (into {} (map (juxt :name :source)) named-old)
+        new-m     (into {} (map (juxt :name :source)) named-new)]
+    (cond
+      (not= (mapv :source (remove :name olds))
+            (mapv :source (remove :name news)))
+      {:error (str ns-sym ": anonymous top-level forms can't come in over"
+                   " git — name them, or use slopp's edit tools")}
+
+      (or (not= (count named-old) (count old-m))
+          (not= (count named-new) (count new-m)))
+      {:error (str ns-sym ": duplicate form names in the pushed file")}
+
+      (not= (get old-m ns-sym) (get new-m ns-sym))
+      {:error (str ns-sym ": the ns declaration can't change over git"
+                   " (requires are structural — use slopp's ns tools)")}
+
+      :else
+      (reduce
+       (fn [acc nm]
+         (let [o     (get old-m nm)
+               n'    (get new-m nm)
+               cur   (some-> (store/form-named st ns-sym nm) :node n/string)
+               stale (reduced
+                      {:error (str ns-sym "/" nm " moved in slopp since this"
+                                   " push's base — fetch first")})]
+           (cond
+             (= o n')    acc                  ; untouched by the push
+             (= cur n')  acc                  ; converged already (re-push)
+             (nil? n')   (cond (nil? cur) acc ; already gone
+                               (= cur o)  (update acc :steps conj
+                                                  {:action :delete
+                                                   :ns ns-sym :name nm})
+                               :else      stale)
+             (nil? o)    (if (nil? cur)
+                           (update acc :steps conj
+                                   {:action :add :ns ns-sym
+                                    :name nm :source n'})
+                           stale)
+             :else       (if (= cur o)
+                           (update acc :steps conj
+                                   {:action :replace :ns ns-sym
+                                    :name nm :source n'})
+                           stale))))
+       {:steps []}
+       (distinct (concat (keys old-m) (keys new-m)))))))
+
+(defn- declared-requires
+  "{:ns sym :requires #{sym}} from file text's ns declaration, or nil."
+  [source]
+  (when-let [form (->> (n/children (p/parse-string-all source))
+                       (filter n/sexpr-able?)
+                       (map n/sexpr)
+                       (filter #(and (seq? %) (= 'ns (first %))))
+                       first)]
+    {:ns       (second form)
+     :requires (set (for [clause (filter sequential? form)
+                          :when  (= :require (first clause))
+                          spec   (rest clause)]
+                      (if (sequential? spec) (first spec) spec)))}))
+
+(defn- topo-new-files
+  "Order [{:ns :requires ...}] so required nses ingest first; nil on cycle."
+  [files]
+  (let [by-ns (into {} (map (juxt :ns identity)) files)
+        deps  (update-vals by-ns :requires)]
+    (loop [pending (set (keys by-ns)), out []]
+      (if (empty? pending)
+        out
+        (let [ready (filter #(empty? (set/intersection (deps %) pending))
+                            pending)]
+          (if (empty? ready)
+            nil
+            (recur (reduce disj pending ready)
+                   (into out (map by-ns) (sort ready)))))))))
+
+(defn- sha-imported? [conn sha]
+  (some? (jdbc/execute-one!
+          conn ["SELECT 1 AS one FROM git_map WHERE sha = ?" sha])))
+
+(defn- validate-changes [changes]
+  (some (fn [{:keys [path new]}]
+          (cond
+            (nil? (path->ns path))
+            {:error (str path ": only src/**.clj can change over git")}
+            (nil? new)
+            {:error (str path ": file deletion over git is not supported"
+                         " — delete forms through slopp instead")}
+            :else nil))
+        changes))
+
+(defn- record-markers!
+  "One :commit marker per incoming commit (parent-first), each pinned to its
+  ORIGINAL pushed sha. `head` anchors every marker's :target — the single
+  group is the content truth; intermediate states live on the git side."
+  [{:keys [map-conn]} session branch incoming head]
+  (doseq [^RevCommit c incoming]
+    (let [ident (.getAuthorIdent c)
+          sha   (.name c)
+          msg   (let [m (str/trim (.getFullMessage c))]
+                  (if (str/blank? m) (str "git commit " (subs sha 0 8)) m))
+          r     (api/commit-point! session msg
+                                   :agent (str "git:" (.getEmailAddress ident))
+                                   :target head
+                                   :extra {:git-sha sha
+                                           :git-author
+                                           (str (.getName ident) " <"
+                                                (.getEmailAddress ident) ">")})]
+      (when-let [cid (:commit r)]
+        (let [d (first (filter #(= cid (:id %))
+                               (store/deltas (:store @session))))]
+          (record-sha! map-conn cid (fingerprint d) sha branch)))))
+  {:ok true})
+
+(defn- import-push!
+  "One pushed ref update → slopp. Validate the whole span, land new files as
+  ingests (dependency order) + everything else as ONE edit group (compile
+  gate rejects the push; red tests land, recorded honestly), then preserve
+  each incoming commit as a marker. Returns {:ok true} | {:error msg}."
+  [{:keys [repo map-conn] :as ctx} session ^ReceiveCommand cmd]
+  (let [ref-name (.getRefName cmd)
+        branch   (when (str/starts-with? ref-name "refs/heads/")
+                   (subs ref-name 11))]
+    (if (nil? branch)
+      {:error "only refs/heads/* can be pushed"}
+      (do
+        (api/sync-with-journal! session)
+        (if (and (not= branch (:branch @session))
+                 (:error (api/branch-switch! session branch)))
+          {:error (str "no slopp branch " branch
+                       " (branch creation over git isn't supported)")}
+          (with-open [rw (RevWalk. ^Repository repo)]
+            (let [oc (.parseCommit rw (.getOldId cmd))
+                  nc (.parseCommit rw (.getNewId cmd))]
+              (.markStart rw nc)
+              (.markUninteresting rw oc)
+              (.sort rw RevSort/TOPO true)
+              (.sort rw RevSort/REVERSE true)
+              (let [incoming (into []
+                                   (remove #(sha-imported?
+                                             map-conn (.name ^RevCommit %)))
+                                   (iterator-seq (.iterator rw)))
+                    changes  (tree-changes repo oc nc)]
+                (or (validate-changes changes)
+                    (let [news   (filter #(nil? (:old %)) changes)
+                          mods   (filter #(and (:old %) (:new %)) changes)
+                          parsed (mapv (fn [{:keys [path new]}]
+                                         (let [src (blob-str repo new)]
+                                           (assoc (declared-requires src)
+                                                  :path path :source src)))
+                                       news)
+                          st     (:store @session)
+                          diffs  (mapv (fn [{:keys [path old new]}]
+                                         (file-steps st (path->ns path)
+                                                     (blob-str repo old)
+                                                     (blob-str repo new)))
+                                       mods)]
+                      (or (some (fn [{:keys [path ns]}]
+                                  (when (not= ns (path->ns path))
+                                    {:error (str path ": declares ns " ns
+                                                 " — path and namespace"
+                                                 " must agree")}))
+                                parsed)
+                          (first (filter :error diffs))
+                          (let [steps   (into [] (mapcat :steps) diffs)
+                                ordered (topo-new-files parsed)
+                                agent   (str "git:" (.getEmailAddress
+                                                     (.getAuthorIdent nc)))
+                                prompt  (str "git push " (subs (.name nc) 0 8)
+                                             ": " (first (str/split-lines
+                                                          (.getFullMessage nc))))]
+                            (if (and (seq parsed) (nil? ordered))
+                              {:error "pushed new namespaces form a require cycle"}
+                              (or (first (keep (fn [{:keys [ns source]}]
+                                                 (let [r (api/ingest!
+                                                          session ns source
+                                                          :agent agent)]
+                                                   (when (:error r)
+                                                     {:error (str "ingest " ns
+                                                                  " failed: "
+                                                                  (:error r))})))
+                                               ordered))
+                                  (when (seq steps)
+                                    (let [r (api/edit-group! session steps
+                                                             :prompt prompt
+                                                             :agent agent)]
+                                      (when (:error r)
+                                        {:error (str "rejected by the compile"
+                                                     " gate: " (:error r))})))
+                                  (record-markers!
+                                   ctx session branch incoming
+                                   (:id (last (store/deltas
+                                               (:store @session)))))))))))))))))))
+
+;; ---------------------------------------------------------------------------
 ;; smart-HTTP server (M2: clone/fetch; M3 adds receive-pack)
 ;;
 ;; The protocol endpoints, verbatim from the smart-http spec:
@@ -322,23 +576,26 @@
 
 (defn- advertise-refs! [ctx ^HttpExchange ex]
   (let [service (get (q-params ex) "service")]
-    (if (= "git-upload-pack" service)
+    (if-not (contains? #{"git-upload-pack" "git-receive-pack"} service)
+      (status! ex 403)                       ; no dumb protocol
       (do (ensure-projected! ctx)
           (doto (.getResponseHeaders ex)
             (.add "Content-Type"
-                  "application/x-git-upload-pack-advertisement")
+                  (str "application/x-" service "-advertisement"))
             (.add "Cache-Control" "no-cache"))
           (.sendResponseHeaders ex 200 0)
           (with-open [os (.getResponseBody ex)]
-            (let [pck (PacketLineOut. os)]
-              (.writeString pck "# service=git-upload-pack\n")
+            (let [pck (PacketLineOut. os)
+                  adv (RefAdvertiser$PacketLineOutRefAdvertiser. pck)]
+              (.writeString pck (str "# service=" service "\n"))
               (.end pck)
-              (-> (doto (UploadPack. ^Repository (:repo ctx))
-                    (.setBiDirectionalPipe false))
-                  (.sendAdvertisedRefs
-                   (RefAdvertiser$PacketLineOutRefAdvertiser. pck))))))
-      ;; dumb protocol / receive-pack (until M3): refused, per plan
-      (status! ex 403))))
+              (if (= "git-upload-pack" service)
+                (-> (doto (UploadPack. ^Repository (:repo ctx))
+                      (.setBiDirectionalPipe false))
+                    (.sendAdvertisedRefs adv))
+                (-> (doto (ReceivePack. ^Repository (:repo ctx))
+                      (.setBiDirectionalPipe false))
+                    (.sendAdvertisedRefs adv)))))))))
 
 (defn- upload-pack! [ctx ^HttpExchange ex]
   (doto (.getResponseHeaders ex)
@@ -351,7 +608,41 @@
       (.setBiDirectionalPipe false)
       (.upload in os nil))))
 
-(defn- git-handler ^HttpHandler [ctx]
+(defn- import-hook
+  "PreReceiveHook: every pushed ref update runs the import pipeline; a
+  rejection's reason lands on the pusher's terminal. Commands JGit already
+  refused (creates/deletes/non-FF) are skipped."
+  ^PreReceiveHook [srv]
+  (reify PreReceiveHook
+    (onPreReceive [_ _rp commands]
+      (locking (:lock (:ctx srv))
+        (doseq [^ReceiveCommand cmd commands]
+          (when (= (.getResult cmd) ReceiveCommand$Result/NOT_ATTEMPTED)
+            (let [r (try (import-push! (:ctx srv) (force (:session srv)) cmd)
+                         (catch Throwable t
+                           {:error (str "import failed: " (.getMessage t))}))]
+              (when (:error r)
+                (.setResult cmd ReceiveCommand$Result/REJECTED_OTHER_REASON
+                            (str (:error r)))))))))))
+
+(defn- receive-pack! [srv ^HttpExchange ex]
+  (let [ctx (:ctx srv)]
+    (ensure-projected! ctx)   ; fresh refs before JGit validates old-ids
+    (doto (.getResponseHeaders ex)
+      (.add "Content-Type" "application/x-git-receive-pack-result")
+      (.add "Cache-Control" "no-cache"))
+    (.sendResponseHeaders ex 200 0)
+    (with-open [in (request-body ex)
+                os (.getResponseBody ex)]
+      (doto (ReceivePack. ^Repository (:repo ctx))
+        (.setBiDirectionalPipe false)
+        (.setAllowNonFastForwards false)
+        (.setAllowCreates false)
+        (.setAllowDeletes false)
+        (.setPreReceiveHook (import-hook srv))
+        (.receive in os nil)))))
+
+(defn- git-handler ^HttpHandler [srv]
   (reify HttpHandler
     (handle [_ ex]
       (try
@@ -359,10 +650,13 @@
               method (.getRequestMethod ex)]
           (cond
             (and (= "GET" method) (str/ends-with? path "/info/refs"))
-            (advertise-refs! ctx ex)
+            (advertise-refs! (:ctx srv) ex)
 
             (and (= "POST" method) (str/ends-with? path "/git-upload-pack"))
-            (upload-pack! ctx ex)
+            (upload-pack! (:ctx srv) ex)
+
+            (and (= "POST" method) (str/ends-with? path "/git-receive-pack"))
+            (receive-pack! srv ex)
 
             :else (status! ex 404)))
         (catch Throwable _
@@ -372,19 +666,26 @@
 (defn start-server!
   "Serve the git smart-HTTP protocol for the store at `:dir` on 127.0.0.1
   (localhost-only, like every slopp transport). Clone with
-  `git clone http://127.0.0.1:<port>/slopp.git`.
-  Returns {:server :ctx :port} for stop-server!."
+  `git clone http://127.0.0.1:<port>/slopp.git`; pushes import through the
+  full verified write pipeline. The api session (image included) boots
+  lazily on the first push — clone/fetch-only servers never pay for it.
+  Returns {:server :ctx :session :port} for stop-server!."
   [port {:keys [dir]}]
   (when (str/blank? (str dir))
     (throw (ex-info "the git server needs a durable store :dir" {})))
   (let [ctx    (open-ctx! dir)
+        srv    {:ctx     ctx
+                :session (delay (api/open! {:dir (str dir)}))
+                :port    port}
         server (HttpServer/create (InetSocketAddress. "127.0.0.1" (int port)) 0)]
-    (.createContext server "/slopp.git" (git-handler ctx))
+    (.createContext server "/slopp.git" (git-handler srv))
     (.start server)
-    {:server server :ctx ctx :port port}))
+    (assoc srv :server server)))
 
-(defn stop-server! [{:keys [^HttpServer server ctx]}]
+(defn stop-server! [{:keys [^HttpServer server ctx session]}]
   (.stop server 0)
+  (when (and session (realized? session))
+    (api/close! (force session)))
   (close-ctx! ctx)
   nil)
 

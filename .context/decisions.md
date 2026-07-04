@@ -300,6 +300,22 @@ the change here (same commit).
     (content-addressed, idempotent) → git_map row (INSERT OR IGNORE +
     read-back) → ref CAS. Every step derivable from the previous;
     `ensure-projected!` repairs interruptions.
+  - **Import semantics (M3):** a push's NET old→new span lands as new-file
+    ingests (dependency order) + ONE edit group; each incoming commit
+    becomes a `:commit` marker (`:git-sha`, `:git-author`, `:target` = the
+    group head) pinned to its ORIGINAL sha — intermediate content states
+    live on the git side only, per the user's "single delta, preserve the
+    commits" ask. Honest caveat: a push with new files is N ingest deltas +
+    one group, not literally one delta. Converged re-pushes skip
+    per-form; a crash between group and markers heals on re-push (forms
+    converge → markers land), between markers and rows heals at the next
+    projection (`:git-sha` repair). Git is a guest writer — the ambiguous
+    cases REJECT with the reason on the pusher's terminal: non-`src/**.clj`
+    paths, file deletions, ns-declaration changes (requires are
+    structural), anonymous top-level forms, duplicate names, per-form
+    staleness (slopp moved since the push's base → "fetch first"),
+    non-fast-forward/creates/deletes (JGit-level). Form deletions WITHIN a
+    file are legitimate `:delete` steps.
 
 - **SG — clj-surgeon-inspired structural ops (user-directed borrow).**
   Compared against realgenekim/clj-surgeon (stateless babashka file

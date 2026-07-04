@@ -116,15 +116,21 @@ Two transports share the SAME dispatch (`mcp/handle`):
   `http/start-server!` programmatically) — localhost-only JSON for
   curl/scripting/evals; `/metrics` returns per-call payload sizes.
 - **Git smart-HTTP** (`clojure -M -m slopp.git <port> [dir]`, or
-  `git/start-server!`) — P4-m8: any git client clones/fetches the
-  milestone projection from `http://127.0.0.1:<port>/slopp.git`.
-  JGit's UploadPack owns the wire format (stateless RPC, protocol v0);
-  `ensure-projected!` runs before every refs advertisement, so foreign
-  commit points from live sessions are served without a restart.
-  Localhost-only, no auth. GOTCHA: keep `slopp.git` reflection-free —
-  reflective JGit calls resolve classes via the per-thread classloader
-  and break on HTTP dispatch threads (only visible under add-lib REPLs,
-  but the hints also keep the hot path cheap).
+  `git/start-server!`) — P4-m8: any git client clones/fetches/pushes the
+  milestone projection at `http://127.0.0.1:<port>/slopp.git`.
+  JGit's UploadPack/ReceivePack own the wire format (stateless RPC,
+  protocol v0); `ensure-projected!` runs before every refs advertisement,
+  so foreign commit points from live sessions are served without a
+  restart. Pushes import through `import-push!`: net span → ingests + ONE
+  verified edit group + a `:commit` marker per incoming commit (original
+  sha preserved); the api session (image included) boots LAZILY on the
+  first push — clone-only servers never pay for it. Red tests land
+  honestly; compile failures and structural violations reject with the
+  reason on the pusher's terminal. Localhost-only, no auth. GOTCHA: keep
+  `slopp.git` reflection-free — reflective JGit calls resolve classes via
+  the per-thread classloader and break on HTTP dispatch threads (only
+  visible under add-lib REPLs, but the hints also keep the hot path
+  cheap).
 
 ## MCP transport (`slopp.mcp`)
 
