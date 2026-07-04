@@ -88,7 +88,9 @@ single writes; the per-write verification makes every red free to observe.
 
 ## Reading results
 
-- Green + quiet ⇒ terse `{:ok true :delta "d42" :tests {:ran 2 :pass 5} :affected 2}`.
+- Green + quiet ⇒ terse `{:ok true :delta "d42" :test {:ran 2 :pass 5 :status :green :scope :affected} :affected 2}`.
+  `:scope :affected` = only the tests exercising your change ran; `:all` = the
+  full suite. `:status` is explicit — never infer red/green from shape.
   Pass `:verbose true` if you want the full map.
 - **Red ⇒ `:test :failures`** carries expected/actual/exception per failure —
   diagnose from the response; you rarely need another round trip. Stack
@@ -103,6 +105,11 @@ single writes; the per-write verification makes every red free to observe.
   one.
 - `:affected` — which tests re-ran (`:all` = no trace info yet; run
   `test_run` once to build the map and narrowing kicks in).
+- `:changed-nses` (groups/merges) — the namespaces the operation touched;
+  everything else is untouched, don't re-read it.
+- A merge conflict's `:ours`/`:theirs` IS the current live source — resolve
+  straight from the payload; re-reading the namespace returns the same text.
+- `:hint` — a one-line workflow nudge (e.g. red-first, batching). Take it.
 
 ## The oracle: answering questions by running code
 
@@ -135,6 +142,18 @@ rebuilds a faithful image from the store).
 - Full-project sweep = `test_run` with NO `ns` — every namespace's tests in
   one call. Never loop test_run over namespaces.
 - Checkpoint when you'd naturally say "done with that".
+
+## Tool index
+
+turn_begin turn_end · query_project query_search query_namespaces
+query_outline query_source query_symbol query_references query_deps
+query_lineage query_history query_form_history query_changes query_eval
+query_observe query_macroexpand query_branches · ingest ns_create
+ns_add_require ns_remove_require · edit_add_form edit_replace_form
+edit_delete_form edit_subform edit_group edit_rename edit_extract
+edit_extract_ns edit_move edit_revert episode_revert ns_rename
+fix_declares · branch_create branch_switch branch_merge branch_delete
+merge_from · test_run checkpoint restart build help
 
 ## Shipping
 

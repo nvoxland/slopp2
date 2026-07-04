@@ -439,11 +439,12 @@
   (MV records the agent resolves by hand), and `:applied` — the ids of THEIR
   deltas now causally delivered here, which is what keeps iterated merges
   exact. Returns [store' delta]."
-  [store from {:keys [merged conflicts new-nses applied id-map]}]
+  [store from {:keys [merged conflicts new-nses applied id-map agent]}]
   (let [[did store'] (gen-id store "d")
         delta (cond-> {:id did :parent (:id (last (:deltas store)))
                        :op :merge :ns '*session* :from (str from)
                        :at (now-ms) :merged merged}
+                agent           (assoc :agent agent)
                 (seq applied)   (assoc :applied (vec applied))
                 (seq id-map)    (assoc :id-map id-map)
                 (seq conflicts) (assoc :conflicts (mapv #(dissoc % :ours) conflicts))

@@ -580,8 +580,10 @@
   (item 1 — orientation was ~90% of tool calls in successful runs; this
   replaces the namespaces→outline×N chain)."
   [session]
-  (mapv (fn [ns-sym] (query-outline session ns-sym))
-        (sort (keys (:namespaces (:store @session))))))
+  (let [st (:store @session)]
+    {:head       (:id (last (store/deltas st)))
+     :namespaces (mapv (fn [ns-sym] (query-outline session ns-sym))
+                       (sort (keys (:namespaces st))))}))
 
 (defn query-search
   "The missing grep: regex over all store source, form-addressed results
@@ -1217,6 +1219,7 @@
                   (with-ms
                     (cond-> {:group    gid
                              :deltas   deltas
+                             :changed-nses (vec (distinct (map :ns steps)))
                              :warnings (vec (remove (comp pre-warned :var) all-w))
                              :test     summary
                              :affected (or (not-empty affected) :all)}

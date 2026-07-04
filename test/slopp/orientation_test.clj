@@ -23,11 +23,13 @@
           (is (true? (:effectful? (by-name 'mut!))))
           (is (true? (:test? (by-name 't))))
           (is (nil? (:effectful? (by-name 't))))))    ; T1: tests aren't flagged
-      (testing "query-project: the whole store's shape in ONE call"
+      (testing "query-project: the whole store's shape in ONE call, with :head"
         (let [p (api/query-project sess)]
-          (is (= '[o.core o.util] (mapv :ns p)))
+          (is (string? (:head p)))
+          (is (= '[o.core o.util] (mapv :ns (:namespaces p))))
           (is (some #(= 'mut! (:name %))
-                    (:forms (first (filter #(= 'o.core (:ns %)) p)))))))
+                    (:forms (first (filter #(= 'o.core (:ns %))
+                                           (:namespaces p))))))))
       (testing "query-search: the missing grep, form-addressed"
         (let [hits (api/query-search sess "swap!")]
           (is (= 1 (count hits)))

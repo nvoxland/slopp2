@@ -209,8 +209,9 @@
     :inputSchema {:type "object" :properties {:name {:type "string"}}
                   :required ["name"]}}
    {:name "branch_merge"
-    :description "Merge a branch into the CURRENT line (switch to main first to merge down). Different-form work lands; same-form divergence returns :conflicts (current line kept, branch surfaced). The branch survives and can continue."
-    :inputSchema {:type "object" :properties {:name {:type "string"}}
+    :description "Merge a branch into the CURRENT line (switch to main first to merge down). Different-form work lands; same-form divergence returns :conflicts (current line kept, branch surfaced — that payload IS current source, no re-read needed). The branch survives. Pass your :agent."
+    :inputSchema {:type "object" :properties {:name {:type "string"}
+                                              :agent {:type "string"}}
                   :required ["name"]}}
    {:name "branch_delete"
     :description "Delete a branch (never the one you are on)."
@@ -263,7 +264,7 @@
   "Optional one-line workflow hint, attached to map results (item 3)." nil)
 
 (defn- text [x]
-  (let [x (if (and *hint* (map? x)) (assoc x :hint *hint*) x)]
+  (let [x (if (and *hint* (map? x) (nil? (:hint x))) (assoc x :hint *hint*) x)]
     {:content [{:type "text" :text (if (string? x) x (pr-str x))}]}))
 
 (def ^:private single-write-tools #{"edit_replace_form" "edit_add_form"})
@@ -291,8 +292,11 @@
                                :singles (if (= (:ns args) last-ns) (inc singles) 1)
                                :last-ns (:ns args)}
 
-                              (write-tools tool)
+                              (#{"edit_group" "checkpoint"} tool)
                               {:test-runs 0 :singles 0 :last-ns nil}
+
+                              (write-tools tool)  ; other writes keep the streak
+                              {:test-runs 0 :singles singles :last-ns last-ns}
 
                               :else
                               {:test-runs test-runs
@@ -346,10 +350,14 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
         (:group r)   (assoc :group (:group r))
         (:deltas r)  (assoc :deltas (count (:deltas r)))
         (:renamed r) (assoc :renamed (:renamed r))
-        t            (assoc :tests (cond-> {:ran (:test t 0) :pass (:pass t 0)}
+        t            (assoc :test (cond-> {:ran (:test t 0) :pass (:pass t 0)
+                                           :status (:status t :green)
+                                           :scope (:scope t)}
                                      (:staleness-detected t) (assoc :staleness-healed true)))
         (:affected r) (assoc :affected (let [a (:affected r)]
                                          (if (= :all a) :all (count a))))
+        (:hint r) (assoc :hint (:hint r))
+        (:changed-nses r) (assoc :changed-nses (:changed-nses r))
         (:image-healed r) (assoc :image-healed true)
         (:existing-warnings r) (assoc :existing-warnings (:existing-warnings r))))))
 
@@ -425,13 +433,13 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
       "edit_replace_form" (text (-> (api/edit-replace! session (sym :ns) (sym :name)
                                                        (:source a) :prompt (:prompt a)
                                                        :agent (:agent a))
-                                    (select-keys [:error :warnings :existing-warnings
+                                    (select-keys [:error :warnings :existing-warnings :hint
                                                   :untested :image-healed :test :affected :delta])
                                     (summarize (:verbose a))))
       "edit_add_form"     (text (-> (api/add-form! session (sym :ns) (:source a)
                                                    :prompt (:prompt a)
                                                    :agent (:agent a))
-                                    (select-keys [:error :warnings :existing-warnings
+                                    (select-keys [:error :warnings :existing-warnings :hint
                                                   :untested :image-healed :test :affected :delta])
                                     (summarize (:verbose a))))
       "edit_delete_form"  (text (-> (api/delete-form! session (sym :ns) (sym :name)
@@ -453,7 +461,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
                                                  (:source s) (assoc :source (:source s)))))
                                            (:steps a))
                                      :prompt (:prompt a) :agent (:agent a))
-                                    (select-keys [:error :step :group :warnings :existing-warnings
+                                    (select-keys [:error :step :group :warnings :existing-warnings :changed-nses
                                                   :image-healed :test :affected :deltas])
                                     (summarize (:verbose a))))
       ;; arg forgiveness: every eval run guessed name/to before finding old/new
@@ -508,7 +516,8 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
       "help"              (text cheat-sheet)
       "branch_create"     (text (api/branch! session (:name a)))
       "branch_switch"     (text (api/branch-switch! session (:name a)))
-      "branch_merge"      (text (api/branch-merge! session (:name a)))
+      "branch_merge"      (text (api/branch-merge! session (:name a)
+                                                    :agent (:agent a)))
       "branch_delete"     (text (api/branch-delete! session (:name a)))
       "query_branches"    (text (api/query-branches session))
       "query_deps"        (text (api/query-deps session (sym :ns) (sym :name)))
@@ -526,7 +535,8 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
                                     (select-keys [:error :conflict :extracted-to
                                                   :moved :rewrote :test :group])
                                     (summarize (:verbose a))))
-      "merge_from"        (text (api/merge! session (:dir a)))
+      "merge_from"        (text (api/merge! session (:dir a)
+                                              :agent (:agent a)))
       "restart"           (do (api/restart! session) (text "restarted"))
       "build"             (text (api/build! session (:dir a)
                                             :main (some-> (:main a) symbol)

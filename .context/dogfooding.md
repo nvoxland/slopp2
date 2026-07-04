@@ -101,3 +101,24 @@ REAL demand:
 Deferred ops become built ops when either instrument fires — never before
 (speculative surface confuses weak models), never only on reach-for silence
 (silence is what workarounds sound like).
+
+3. **Transcript analysis** — after each round, spawn analyst sub-agents over
+   the raw agent transcripts (the harness task `.output` JSONL for
+   sub-agents; `~/.claude/projects/<workspace>/` session files for real
+   Claude Code runs) with the standing rubric: every error + recovery cost,
+   redundant calls, N-calls-where-1-would-do, semantics misunderstandings,
+   invented tools/args, and (for curl runs) shell-corruption of payloads.
+   Self-reports UNDERSTATE friction — the 3d round's reports said "no
+   friction" while the transcripts showed a misfired tool lookup, ignored
+   hints, impl-first TDD, and a silently weakened test assertion.
+
+## Curl-bridge harness notes (NOT product guidance — native MCP has none of this)
+
+For eval prompts that drive slopp over the HTTP bridge:
+- Mandate single-quoted `-d '...'` payloads. Double quotes let bash eat `$1`
+  from source strings (haiku shipped a weakened assertion routing around
+  it); doubled backslashes turn `\n` into stray char literals.
+- Recommend batching several curls per Bash call (sonnet: 38 HTTP calls in
+  20 Bash invocations).
+- State that slopp tools are NOT in the client's local tool registry —
+  curl is the only path (sonnet burned a ToolSearch discovering this).
