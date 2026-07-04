@@ -128,7 +128,10 @@ Two transports share the SAME dispatch (`mcp/handle`):
   sha preserved); the api session (image included) boots LAZILY on the
   first push — clone-only servers never pay for it. Red tests land
   honestly; compile failures and structural violations reject with the
-  reason on the pusher's terminal. Localhost-only, no auth. GOTCHA: keep
+  reason on the pusher's terminal. `refs/heads/wip/<branch>` mirrors
+  un-milestone'd live state (read-only, deleted when clean) — tools
+  `git diff origin/main..origin/wip/main`. Localhost-only, no auth.
+  GOTCHA: keep
   `slopp.git` reflection-free — reflective JGit calls resolve classes via
   the per-thread classloader and break on HTTP dispatch threads (only
   visible under add-lib REPLs, but the hints also keep the hot path

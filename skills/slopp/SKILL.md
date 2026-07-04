@@ -59,7 +59,8 @@ Server: `clojure -M -m slopp.mcp` (stdio) from the slopp repo.
    standalone server (`clojure -M -m slopp.git <port> <dir>`) serves them
    to any git client at `http://127.0.0.1:<port>/slopp.git` — clone, fetch,
    and push all work (pushes import through the verified pipeline); each
-   milestone's `:sha` in query_commits is its git commit id.
+   milestone's `:sha` in query_commits is its git commit id, and
+   `wip/<branch>` refs mirror un-milestone'd live state (read-only).
 
 ## Choosing the right write tool
 

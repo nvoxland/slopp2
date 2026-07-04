@@ -36,7 +36,7 @@
            [java.util.zip GZIPInputStream]
            [org.eclipse.jgit.dircache DirCache DirCacheEntry]
            [org.eclipse.jgit.lib CommitBuilder Constants FileMode ObjectId
-            PersonIdent Repository]
+            ObjectInserter PersonIdent Repository]
            [org.eclipse.jgit.revwalk RevCommit RevSort RevWalk]
            [org.eclipse.jgit.storage.file FileRepositoryBuilder]
            [org.eclipse.jgit.transport PacketLineOut PreReceiveHook
@@ -194,38 +194,43 @@
        "\n\nSlopp-Commit: " (:id d) "\n"
        (when (= :red (:status d)) "Slopp-Status: red\n")))
 
+(defn- insert-tree!
+  "Blobs + git tree for a {path content} map; returns the tree ObjectId."
+  [^ObjectInserter ins paths]
+  (let [dc (DirCache/newInCore)
+        b  (.builder dc)]
+    (doseq [[^String path ^String content] paths]
+      (let [blob (.insert ins Constants/OBJ_BLOB
+                          (.getBytes content StandardCharsets/UTF_8))]
+        (.add b (doto (DirCacheEntry. path)
+                  (.setFileMode FileMode/REGULAR_FILE)
+                  (.setObjectId blob)))))
+    (.finish b)
+    (.writeTree dc ins)))
+
 (defn- insert-commit!
   "Build blobs + tree + commit for marker `d` and return the sha. Pure
   function of (parent-sha, d, tree-map) — determinism is what makes the
   projection rebuildable."
   [^Repository repo parent-sha d tree-map]
   (with-open [ins (.newObjectInserter repo)]
-    (let [dc (DirCache/newInCore)
-          b  (.builder dc)]
-      (doseq [[^String path ^String content] (commit-paths tree-map)]
-        (let [blob (.insert ins Constants/OBJ_BLOB
-                            (.getBytes content StandardCharsets/UTF_8))]
-          (.add b (doto (DirCacheEntry. path)
-                    (.setFileMode FileMode/REGULAR_FILE)
-                    (.setObjectId blob)))))
-      (.finish b)
-      (let [tree-id (.writeTree dc ins)
-            at      (Instant/ofEpochMilli (long (:at d)))
-            who     (str (or (:agent d) "slopp"))
+    (let [tree-id (insert-tree! ins (commit-paths tree-map))
+          at      (Instant/ofEpochMilli (long (:at d)))
+          who     (str (or (:agent d) "slopp"))
             ;; reflection-free ctors matter: reflective JGit calls resolve
             ;; classes per-thread and break on server dispatch threads
-            cb      (doto (CommitBuilder.)
-                      (.setTreeId tree-id)
-                      (.setAuthor (PersonIdent. who (author-email (:agent d))
-                                                at ^java.time.ZoneId ZoneOffset/UTC))
-                      (.setCommitter (PersonIdent. "slopp" "slopp@slopp"
-                                                   at ^java.time.ZoneId ZoneOffset/UTC))
-                      (.setMessage (commit-message d)))]
-        (when parent-sha
-          (.setParentId cb (ObjectId/fromString parent-sha)))
-        (let [cid (.insert ins cb)]
-          (.flush ins)
-          (.name cid))))))
+          cb      (doto (CommitBuilder.)
+                    (.setTreeId tree-id)
+                    (.setAuthor (PersonIdent. who (author-email (:agent d))
+                                              at ^java.time.ZoneId ZoneOffset/UTC))
+                    (.setCommitter (PersonIdent. "slopp" "slopp@slopp"
+                                                 at ^java.time.ZoneId ZoneOffset/UTC))
+                    (.setMessage (commit-message d)))]
+      (when parent-sha
+        (.setParentId cb (ObjectId/fromString parent-sha)))
+      (let [cid (.insert ins cb)]
+        (.flush ins)
+        (.name cid)))))
 
 (defn- set-branch-ref!
   "Point refs/heads/<nm> at `sha` (CAS; the journal is authoritative, so a
@@ -246,6 +251,55 @@
               (and (= "LOCK_FAILURE" res) (< n 3)) (recur (inc n))
               :else (throw (ex-info (str "git ref update failed: " res)
                                     {:ref ref-name :result res})))))))))
+
+(defn- delete-ref! [^Repository repo ref-name]
+  (when (.resolve repo ref-name)
+    (-> (doto (.updateRef repo ref-name) (.setForceUpdate true))
+        (.delete))))
+
+(defn- ensure-wip!
+  "refs/heads/wip/<line>: a throwaway commit of the LIVE store state (the
+  element rows), minted whenever it differs from the last milestone's tree
+  and deleted when clean. 'Uncommitted changes' can't cross the git wire —
+  a synthetic ref is the protocol-legal idiom (cf. refs/pull/*, Gerrit's
+  refs/changes/*): tools `git diff origin/main..origin/wip/main`.
+  Deterministic (tree from the rows, timestamp from the journal head), so
+  concurrent projectors converge; never pinned in git_map, never a
+  milestone parent, rejected on push."
+  [{:keys [^Repository repo]} line-name conn deltas tip-sha]
+  (let [ref-name (str "refs/heads/wip/" line-name)]
+    (if (nil? tip-sha)
+      (delete-ref! repo ref-name)          ; no milestone = no baseline
+      (with-open [ins (.newObjectInserter repo)]
+        (let [tree-id (insert-tree! ins (commit-paths
+                                         (db/rendered-sources conn)))
+              tip     (ObjectId/fromString tip-sha)
+              m-tree  (with-open [rw (RevWalk. repo)]
+                        (.getId (.getTree (.parseCommit rw tip))))]
+          (if (= tree-id m-tree)
+            (delete-ref! repo ref-name)
+            (let [mpos  (last (keep-indexed
+                               (fn [i d] (when (= :commit (:op d)) i))
+                               deltas))
+                  since (- (count deltas) (inc mpos))
+                  desc  (:description (nth deltas mpos))
+                  at    (Instant/ofEpochMilli (long (:at (last deltas))))
+                  msg   (if (pos? since)
+                          (str "wip: " since " delta"
+                               (when (not= 1 since) "s")
+                               " since \"" desc "\"\n")
+                          (str "wip: live state differs from \"" desc "\"\n"))
+                  cb    (doto (CommitBuilder.)
+                          (.setTreeId tree-id)
+                          (.setParentId tip)
+                          (.setAuthor (PersonIdent. "slopp" "wip@slopp" at
+                                                    ^java.time.ZoneId ZoneOffset/UTC))
+                          (.setCommitter (PersonIdent. "slopp" "wip@slopp" at
+                                                       ^java.time.ZoneId ZoneOffset/UTC))
+                          (.setMessage msg))
+                  cid   (.insert ins cb)]
+              (.flush ins)
+              (set-branch-ref! repo (str "wip/" line-name) (.name cid)))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; projection
@@ -291,13 +345,17 @@
   Returns {:refs {name sha-or-nil}}."
   [{:keys [dir repo map-conn lock] :as ctx}]
   (locking lock
-    (let [refs (into {"main" (project-journal! ctx "main"
-                                               (db/deltas-after map-conn 0))}
-                     (map (fn [[nm bdir]]
-                            [nm (with-open [conn (db/open! bdir)]
-                                  (project-journal! ctx nm
-                                                    (db/deltas-after conn 0)))]))
-                     (branch-journals dir))]
+    (let [main-ds  (db/deltas-after map-conn 0)
+          main-tip (project-journal! ctx "main" main-ds)
+          _        (ensure-wip! ctx "main" map-conn main-ds main-tip)
+          refs     (into {"main" main-tip}
+                         (map (fn [[nm bdir]]
+                                [nm (with-open [conn (db/open! bdir)]
+                                      (let [ds  (db/deltas-after conn 0)
+                                            tip (project-journal! ctx nm ds)]
+                                        (ensure-wip! ctx nm conn ds tip)
+                                        tip))]))
+                         (branch-journals dir))]
       (doseq [[nm sha] refs :when sha]
         (set-branch-ref! repo nm sha))
       {:refs refs})))
@@ -618,12 +676,16 @@
       (locking (:lock (:ctx srv))
         (doseq [^ReceiveCommand cmd commands]
           (when (= (.getResult cmd) ReceiveCommand$Result/NOT_ATTEMPTED)
-            (let [r (try (import-push! (:ctx srv) (force (:session srv)) cmd)
-                         (catch Throwable t
-                           {:error (str "import failed: " (.getMessage t))}))]
-              (when (:error r)
-                (.setResult cmd ReceiveCommand$Result/REJECTED_OTHER_REASON
-                            (str (:error r)))))))))))
+            (if (str/starts-with? (.getRefName cmd) "refs/heads/wip/")
+              ;; checked BEFORE forcing :session — no image boot to say no
+              (.setResult cmd ReceiveCommand$Result/REJECTED_OTHER_REASON
+                          "wip refs are read-only projections of un-milestone'd state")
+              (let [r (try (import-push! (:ctx srv) (force (:session srv)) cmd)
+                           (catch Throwable t
+                             {:error (str "import failed: " (.getMessage t))}))]
+                (when (:error r)
+                  (.setResult cmd ReceiveCommand$Result/REJECTED_OTHER_REASON
+                              (str (:error r))))))))))))
 
 (defn- receive-pack! [srv ^HttpExchange ex]
   (let [ctx (:ctx srv)]

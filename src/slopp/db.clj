@@ -145,6 +145,19 @@
   (jdbc/execute! conn ["INSERT INTO meta (k,v) VALUES ('line-id', ?)
                         ON CONFLICT(k) DO UPDATE SET v = excluded.v" line-id]))
 
+(defn rendered-sources
+  "{ns-sym rendered-source} straight from the element rows — the `source`
+  column is each element's canonical serialization, so concatenation by pos
+  IS the render-ns output, byte-exact. The live state without parsing,
+  replaying, or a session (P4-m8 wip projection reads it per request)."
+  [conn]
+  (reduce (fn [m row]
+            (update m (symbol (:elements/ns row))
+                    (fnil str "") (:elements/source row)))
+          {}
+          (jdbc/execute! conn ["SELECT ns, source FROM elements
+                                ORDER BY ns, pos"])))
+
 (defn commit-shas
   "P4-m8: {delta-id git-sha} from the projection's pinning table (created and
   written by slopp.git; this is read-only convenience for query surfaces).

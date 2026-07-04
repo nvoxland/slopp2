@@ -320,6 +320,21 @@ the change here (same commit).
     (`db/commit-shas` reads git_map read-only; ambiguous post-fork id
     collisions are omitted, never guessed; imported markers surface their
     `:git-sha` from birth).
+  - **Wip refs (M6, user-probed):** "uncommitted changes" cannot cross the
+    git wire — the protocol moves only refs + committed objects; dirty
+    state is a working-directory feature. The protocol-legal idiom
+    (cf. refs/pull/*, Gerrit refs/changes/*): `refs/heads/wip/<branch>`
+    holds a throwaway commit of the LIVE store state (parent = last
+    milestone, tree = the element rows via `db/rendered-sources`,
+    byte-exact) whenever it differs from the milestone tree; deleted when
+    clean. Tools `git diff origin/main..origin/wip/main`. Deterministic →
+    concurrent projectors converge; never in git_map, never a milestone
+    parent, pushes to wip/* reject (before the lazy session boots). Known
+    costs: the ref moves non-fast-forward by design (fetch shows "forced
+    update"), and orphaned wip objects accumulate in the bare repo until a
+    gc (maintenance follow-on). A store with zero milestones gets no wip
+    ref (no baseline). Hidden-namespace variant (refs/slopp/wip/*) is a
+    one-line change if branch-listing noise ever bothers.
   - **v1 limits (recorded, not accidental):** localhost-only, no auth; no
     branch creation/deletion/tags over push (git clients can't push to a
     store with zero milestones — the first milestone comes from slopp);
