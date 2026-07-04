@@ -296,3 +296,30 @@ conflict against bob on main.
   per-agent servers, cross-server sync, branch/merge causal delivery,
   episodes. Zero integration failures; the only scoring bugs were in the
   harness (field name, grep escape), not the product.
+| 2026-07-03 | 00d870e | calculator | 2 | 11 | 249 | 725 | 722 |
+| 2026-07-03 | 00d870e | inventory | 1 | 7 | 96 | 345 | 380 |
+| 2026-07-03 | 00d870e | wordstats | 1 | 8 | 91 | 427 | 497 |
+
+## Eval round 3d: same task on current slopp (@ 00d870e, protocol v2)
+
+Both PASS 20/20 acceptance. vs their own 3c runs (same task/seed), while
+ABSORBING the new turn protocol (2+ extra required calls):
+
+| model | 3c | 3d | delta |
+|---|---|---|---|
+| sonnet | 53.6k / 289s / 28 | 50.9k / 267s / 22 | -5% tok, -8% wall, -21% calls |
+| haiku  | 40.3k / 380s / 54 | 44.5k / 318s / 44 | +10% tok, -16% wall, -19% calls |
+
+- haiku vs its FILES baseline: +22% tokens (was +34% in 3c, +11%... varies
+  by run; call count keeps falling: 66 -> 54 -> 44). The 35-tool surface did
+  NOT confuse it — the turn gate + labels were followed cleanly first try.
+- sonnet's workflow is now the designed shape exactly: 1 rename covering all
+  call sites, red->green pair per feature, ONE full-project test_run sweep
+  (F-3c1), 10 writes total, zero manual multi-site patterns.
+- Scripted micro-benchmark (same commit): calculator 249ms / inventory 96 /
+  wordstats 91 — up ~3-4ms/call vs 8e46d01 from added per-call dispatch
+  (hints, journal-sync check, turn gate). Known cause, acceptable.
+- MINING (slopp.mine, all 6 journals incl. 3c + multi-Claude): zero
+  workaround fanouts. Only signature-change shapes are the task's own
+  make-order arity addition with 0 caller edits (multi-arity absorbed it).
+  change_signature / inline stay deferred on evidence.

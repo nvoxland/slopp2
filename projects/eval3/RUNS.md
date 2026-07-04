@@ -23,3 +23,9 @@ trusted.
 | 2026-07-03 | haiku  | slopp@fcdbe7d (items 0-5: D5.1, query_project/search, hints, subform) | 40,333 | 380s | 54 | PASS acceptance; "no friction" reported; -17% tok vs 3b |
 | 2026-07-03 | sonnet | slopp@fcdbe7d (items 0-5) | 53,622 | 289s | 28 (61 slopp calls, curl-batched) | PASS; red/green per change; flagged query_references cross-ns gap |
 | 2026-07-03 | opus   | slopp@fcdbe7d (items 0-5) | 59,787 | 514s | 32 | PASS; red-first TDD w/ predicted reds; flagged no project-wide test_run |
+| 2026-07-03 | sonnet-3d (claude-sonnet-5) | slopp@00d870e, protocol v2 (turn gate + agent labels + friction line) | 50,888 | 267s | 22 | PASS 20/20; clean turn protocol; ZERO manual multi-site patterns (self-report + mine) |
+| 2026-07-03 | haiku-3d (claude-haiku-4-5-20251001) | slopp@00d870e, protocol v2 | 44,480 | 318s | 44 | PASS 20/20; turn gate absorbed without friction; only friction: JSON escaping + own test refinement |
+
+Protocol v2 note (3d): the harness wrapper now includes the enforced turn
+protocol (turn_begin/turn_end + agent label on writes) and the
+friction-report line from .context/dogfooding.md. accept.sh unchanged.
