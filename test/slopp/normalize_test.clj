@@ -67,3 +67,35 @@
           (is (= 'cp.core/sloppy (:form (first hits))))
           (is (= :warning (:level (first hits))))))
       (finally (api/close! sess)))))
+
+(deftest expanded-rules-are-strictly-value-preserving
+  (doseq [[in out] {"(= x nil)"                  "(nil? x)"
+                    "(= nil x)"                  "(nil? x)"
+                    "(not (nil? x))"             "(some? x)"
+                    "(into [] xs)"               "(vec xs)"
+                    "(filter (complement p) xs)" "(remove p xs)"
+                    "(cond t x)"                 "(when t x)"}]
+    (is (= out (:src (norm/normalize-source in))) in))
+  (testing "near-misses stay untouched"
+    (doseq [src ["(= x y)" "(into [0] xs)" "(cond a b c d)"
+                 "(filter pred xs)"]]
+      (is (= src (:src (norm/normalize-source src))) src))))
+
+(deftest checkpoint-runs-declare-hygiene
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'dh.core
+                   (str "(ns dh.core (:require [clojure.test :refer [deftest is]]))\n"
+                        "(deftest t (is true))\n"))
+      (api/checkpoint! sess :label "base")
+      ;; the compile gate's escape hatch, as agents actually use it
+      (api/add-form! sess 'dh.core "(declare later)")
+      (api/add-form! sess 'dh.core "(defn caller [x] (later x))")
+      (api/add-form! sess 'dh.core "(defn later [x] (inc x))")
+      (api/add-form! sess 'dh.core "(deftest caller-t (is (= 3 (caller 2))))")
+      (let [r (api/checkpoint! sess :label "feature")]
+        (is (seq (:declares-fixed r)) (pr-str (keys r)))
+        (let [src (api/query-source sess 'dh.core)]
+          (is (not (re-find #"declare" src)))
+          (is (< (.indexOf src "defn later") (.indexOf src "defn caller")))))
+      (finally (api/close! sess)))))

@@ -28,7 +28,7 @@
 (declare run-verification! forms-changed-since query-outline
          hot-load-all! fresh-image! reap-idle-images!
          content-ops delta-fids episode-boundary episode-span
-         query-changes edit-group!)
+         query-changes edit-group! fix-declares!)
 
 (defn- start-spare!
   "Kick off a background-warming spare image (D5 warm spare) if enabled."
@@ -1320,6 +1320,16 @@
               (commit-appended! session
                                 #(store/record-verification % main-ns s) [])
               s)))
+        ;; automatic declare hygiene (user-directed): the compile gate makes
+        ;; agents mint (declare)s; the checkpoint cleans the safe ones up
+        declare-fixes
+        (vec (for [ns* (distinct (keep #(store/ns-of-form-id (:store @session) %)
+                                       changed))
+                   :let [r (fix-declares! session ns*
+                                          :prompt (or label "checkpoint declare hygiene")
+                                          :agent agent)]
+                   :when (pos? (:removed r 0))]
+               {:ns ns* :removed (:removed r) :moved (:moved r)}))
         ;; kondo lint over every namespace touched since the last checkpoint —
         ;; syntax + best-practice findings, form-addressed (user-requested gate)
         lint (vec (for [ns-sym (distinct (map #(store/ns-of-form-id (:store @session) %)
@@ -1344,7 +1354,8 @@
              :normalized (count rewrites)
              :rewrites   (mapv #(select-keys % [:form :applied]) rewrites)
              :lint       lint}
-      summary (assoc :test summary))))
+      (seq declare-fixes) (assoc :declares-fixed declare-fixes)
+      summary             (assoc :test summary))))
 
 (defn edit-subform!
   "Item 5 — paredit's invariant, agent-shaped: replace the UNIQUE structural

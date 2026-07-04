@@ -73,6 +73,35 @@
       [(lnode (into [(tok 'not=)] (rest (inner-nodes (nth kids 1)))))
        "(not (= ...)) => (not= ...)"]
 
+      ;; (= X nil) / (= nil X) => (nil? X)
+      (and (= '= head) (= 3 cnt) (or (nil? (nth s 1)) (nil? (nth s 2))))
+      [(lnode [(tok 'nil?) (nth kids (if (nil? (nth s 1)) 2 1))])
+       "(= x nil) => (nil? x)"]
+
+      ;; (not (nil? X)) => (some? X)
+      (and (= 'not head) (= 2 cnt)
+           (seq? (second s)) (= 'nil? (first (second s)))
+           (= 2 (count (second s))))
+      [(lnode [(tok 'some?) (second (inner-nodes (nth kids 1)))])
+       "(not (nil? x)) => (some? x)"]
+
+      ;; (into [] XS) => (vec XS)
+      (and (= 'into head) (= 3 cnt) (= [] (nth s 1)))
+      [(lnode [(tok 'vec) (nth kids 2)])
+       "(into [] xs) => (vec xs)"]
+
+      ;; (filter (complement P) XS) => (remove P XS)
+      (and (= 'filter head) (= 3 cnt)
+           (seq? (second s)) (= 'complement (first (second s)))
+           (= 2 (count (second s))))
+      [(lnode [(tok 'remove) (second (inner-nodes (nth kids 1))) (nth kids 2)])
+       "(filter (complement p) xs) => (remove p xs)"]
+
+      ;; (cond T X) => (when T X)   (single-clause cond)
+      (and (= 'cond head) (= 3 cnt) (not (keyword? (nth s 1))))
+      [(lnode [(tok 'when) (nth kids 1) (nth kids 2)])
+       "(cond t x) => (when t x)"]
+
       :else nil)))
 
 (defn normalize-source

@@ -79,3 +79,25 @@ model). Token metrics compare the *workflow shape* (whole-file writes + test
 output reads vs. form writes + structured results) — that's the comparison
 that matters. A fully symmetric eval (fresh agents driving slopp over MCP per
 model) is roadmap #1 territory.
+
+## Demand observation (discoverability countermeasure)
+
+Needs with a workable manual path never announce themselves ("do agents not
+reach for it because they don't know it exists?" — rename would have failed
+that test too). Two standing instruments keep the tool surface matched to
+REAL demand:
+
+1. **Workaround mining** — `clojure -M -m slopp.mine <store-dir> ...` scans
+   any provenance journal for manual refactoring shapes (change-signature:
+   defn arg-vector changed + nearby caller replaces; inline: defn deleted +
+   nearby caller replaces). Run it over every eval store and dogfood project
+   as part of writing up a round.
+2. **Friction-report prompt line** — every eval/dogfood agent prompt MUST
+   include: "if you ever edit a function AND its callers for one logical
+   change, or hand-inline a function, or repeat any other multi-step pattern
+   for a single intent — say so in your report." Self-reports are the most
+   productive signal this project has (all of F/T/E/S came from them).
+
+Deferred ops become built ops when either instrument fires — never before
+(speculative surface confuses weak models), never only on reach-for silence
+(silence is what workarounds sound like).

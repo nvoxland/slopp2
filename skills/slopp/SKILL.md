@@ -43,9 +43,9 @@ Server: `clojure -M -m slopp.mcp` (stdio) from the slopp repo.
    episodes under your turn automatically. `query_history {collapse: true}` reads the
    long-term history at episode grain.
 5. **Checkpoint at unit boundaries.** When a piece of work is done, call
-   `checkpoint {label}` — it tidies the forms you touched (deterministic,
-   behavior-preserving rewrites, re-verified) and marks the boundary in
-   history.
+   `checkpoint {label, agent}` — it tidies the forms you touched
+   (deterministic, behavior-preserving rewrites), cleans up satisfied
+   `(declare)`s, re-verifies, and marks the boundary in history.
 
 ## Choosing the right write tool
 
