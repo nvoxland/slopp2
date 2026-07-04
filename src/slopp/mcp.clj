@@ -201,7 +201,7 @@
                                :target {:type "string"}}
                   :required ["description"]}}
    {:name "query_commits"
-    :description "Milestones, newest first: description, status, human time, and target delta id (plug targets into query_changes from/to for a between-milestones diff)."
+    :description "Milestones, newest first: description, status, human time, and target delta id (plug targets into query_changes from/to for a between-milestones diff). Rows carry :sha — the milestone's git commit id — once the git projection has minted it (slopp.git server; imported commits keep their pushed sha)."
     :inputSchema {:type "object" :properties {}}}
    {:name "test_run"
     :description "Run tests in the live image and record the result. No :ns = EVERY namespace's tests in one call (the full-project sweep). :only restricts to named tests; :fresh true restarts first for a guaranteed-faithful run."

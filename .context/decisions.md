@@ -316,6 +316,24 @@ the change here (same commit).
     staleness (slopp moved since the push's base → "fetch first"),
     non-fast-forward/creates/deletes (JGit-level). Form deletions WITHIN a
     file are legitimate `:delete` steps.
+  - **Surfacing:** `query-commits` rows carry `:sha` once minted
+    (`db/commit-shas` reads git_map read-only; ambiguous post-fork id
+    collisions are omitted, never guessed; imported markers surface their
+    `:git-sha` from birth).
+  - **v1 limits (recorded, not accidental):** localhost-only, no auth; no
+    branch creation/deletion/tags over push (git clients can't push to a
+    store with zero milestones — the first milestone comes from slopp);
+    form order and inter-form trivia normalize back to slopp's layout on
+    round-trip; **`branch_merge` does not transfer milestones** —
+    `merge-logs` routes `:commit` through the unknown-op skip-with-note
+    (store.clj), so a merged branch's history surfaces in git only at the
+    next main milestone.
+  - **Follow-ons (demand-driven):** slopp-as-client (fetch/push to GitHub
+    from slopp), auth, push-creates-branch, per-commit import groups
+    (better query-changes spans at N× verification cost), file
+    deletions/renames on import, ns-decl imports, protocol v2, `:tree`
+    delta-encoding if journal growth ever matters, projecting `:merge`
+    deltas as git merge commits.
 
 - **SG — clj-surgeon-inspired structural ops (user-directed borrow).**
   Compared against realgenekim/clj-surgeon (stateless babashka file

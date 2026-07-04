@@ -55,7 +55,11 @@ Server: `clojure -M -m slopp.mcp` (stdio) from the slopp repo.
    with your description. It is green-gated (red tests refuse it; `force:
    true` records a red milestone honestly). `query_commits` lists
    milestones, and their targets plug into `query_changes {from, to}` for
-   a between-milestones diff.
+   a between-milestones diff. Milestones are also the GIT grain: a
+   standalone server (`clojure -M -m slopp.git <port> <dir>`) serves them
+   to any git client at `http://127.0.0.1:<port>/slopp.git` — clone, fetch,
+   and push all work (pushes import through the verified pipeline); each
+   milestone's `:sha` in query_commits is its git commit id.
 
 ## Choosing the right write tool
 

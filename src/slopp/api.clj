@@ -1591,19 +1591,28 @@
 
 (defn query-commits
   "Milestones, newest first:
-  [{:commit :description :target :status :agent :at}]. Commit `:target` ids
-  plug straight into query-changes :from/:to for between-milestone diffs."
+  [{:commit :description :target :status :agent :at :sha}]. Commit `:target`
+  ids plug straight into query-changes :from/:to for between-milestone
+  diffs. `:sha` (P4-m8) is the milestone's git commit id — present once the
+  git projection has minted it (imported markers carry theirs from birth)."
   [session]
-  (->> (store/deltas (:store @session))
-       (filter #(= :commit (:op %)))
-       reverse
-       (mapv (fn [d]
-               (cond-> {:commit      (:id d)
-                        :description (:description d)
-                        :target      (:target d)
-                        :status      (:status d)
-                        :at          (human-time (:at d))}
-                 (:agent d) (assoc :agent (:agent d)))))))
+  (let [{:keys [dir]} @session
+        shas (when dir
+               (try (with-open [conn (db/open! dir)]
+                      (db/commit-shas conn))
+                    (catch Exception _ nil)))]
+    (->> (store/deltas (:store @session))
+         (filter #(= :commit (:op %)))
+         reverse
+         (mapv (fn [d]
+                 (cond-> {:commit      (:id d)
+                          :description (:description d)
+                          :target      (:target d)
+                          :status      (:status d)
+                          :at          (human-time (:at d))}
+                   (:agent d) (assoc :agent (:agent d))
+                   (or (:git-sha d) (get shas (:id d)))
+                   (assoc :sha (or (:git-sha d) (get shas (:id d))))))))))
 
 (defn edit-subform!
   "Item 5 — paredit's invariant, agent-shaped: replace the UNIQUE structural

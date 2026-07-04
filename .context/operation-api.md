@@ -19,7 +19,9 @@ by convention it must not redefine code; redefinition belongs to edit ops).
 ## History views (the granularity ladder)
 
 commit points → turns → episodes → span diffs → forms, each row carrying
-the ids to drill into the next: `query-commits` / `query-history {collapse
+the ids to drill into the next: `query-commits` (rows carry `:sha`, the
+milestone's git commit id, once the P4-m8 projection has minted it) /
+`query-history {collapse
 true}` (COMMIT rows with description + status; turn brackets with the
 verbatim intent + nested episode rows; `:contains` searches turn INTENTS,
 not just episode labels) → `query-changes {:from/:to | :agent}` (net

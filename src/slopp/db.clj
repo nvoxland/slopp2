@@ -145,6 +145,23 @@
   (jdbc/execute! conn ["INSERT INTO meta (k,v) VALUES ('line-id', ?)
                         ON CONFLICT(k) DO UPDATE SET v = excluded.v" line-id]))
 
+(defn commit-shas
+  "P4-m8: {delta-id git-sha} from the projection's pinning table (created and
+  written by slopp.git; this is read-only convenience for query surfaces).
+  Nil when nothing has been projected. Only UNAMBIGUOUS rows: a delta id
+  that collides across lines (post-fork id reuse) is omitted, never guessed."
+  [conn]
+  (when (seq (jdbc/execute! conn ["SELECT name FROM sqlite_master
+                                   WHERE type='table' AND name='git_map'"]))
+    (into {}
+          (keep (fn [row]
+                  ;; aggregates come back unqualified; plain columns may not
+                  (when (= 1 (or (:n row) (:git_map/n row)))
+                    [(or (:delta_id row) (:git_map/delta_id row))
+                     (or (:sha row) (:git_map/sha row))])))
+          (jdbc/execute! conn ["SELECT delta_id, MIN(sha) AS sha, COUNT(*) AS n
+                                FROM git_map GROUP BY delta_id"]))))
+
 (defn deltas-after
   "The journal suffix past the first `n` deltas (incremental sync)."
   [conn n]

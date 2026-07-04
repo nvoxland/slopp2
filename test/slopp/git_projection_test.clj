@@ -123,6 +123,10 @@
                              ":paths")))
         (testing "re-projection is a no-op"
           (is (= tip (get-in (git/ensure-projected! ctx) [:refs "main"]))))
+        (testing "query-commits surfaces the projected sha"
+          (let [[c2 c1] (api/query-commits sess)]
+            (is (= tip (:sha c2)))
+            (is (= (first (:parents info)) (:sha c1)))))
         (git/close-ctx! ctx)
         (testing "rebuild from scratch mints IDENTICAL shas"
           (rm-rf (io/file dir ".slopp" "git"))

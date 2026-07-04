@@ -118,6 +118,7 @@
                 (is (every? #(= :green (:status %)) [m1 m2]))))
             (testing "pushed shas survive a fresh clone (identity preserved)"
               (is (= pushed-tip (remote-main-sha env)))
+              (is (= pushed-tip (:sha (first (api/query-commits sess)))))
               (let [again (temp-dir "slopp-import-reclone")]
                 (with-open [g2 (clone! env again)]
                   (is (= pushed-tip
