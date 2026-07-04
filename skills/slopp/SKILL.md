@@ -41,7 +41,10 @@ Server: `clojure -M -m slopp.mcp` (stdio) from the slopp repo.
    episodes braid together. Label sub-agents with PATH labels
    (`alice/tests`, `alice/impl`): the collapsed history then nests their
    episodes under your turn automatically. `query_history {collapse: true}` reads the
-   long-term history at episode grain.
+   long-term history at episode grain (`contains` searches turn intents).
+   When the USER asks what happened, pass `format: "text"` to
+   `query_history`/`query_changes` — timestamps, story lines, and line
+   diffs, ready to relay verbatim instead of narrating EDN.
 5. **Checkpoint at unit boundaries.** When a piece of work is done, call
    `checkpoint {label, agent}` — it tidies the forms you touched
    (deterministic, behavior-preserving rewrites), cleans up satisfied

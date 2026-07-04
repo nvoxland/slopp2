@@ -16,6 +16,19 @@ source) · `query-references` · `query-lineage` (deltas matching `:form-id`
 or membership in `:form-ids`) · `query-eval` (**observe-only** oracle access —
 by convention it must not redefine code; redefinition belongs to edit ops).
 
+## History views (the granularity ladder)
+
+turns → episodes → span diffs → forms, each row carrying the ids to drill
+into the next: `query-history {collapse true}` (turn brackets with the
+verbatim intent + nested episode rows; `:contains` searches turn INTENTS,
+not just episode labels) → `query-changes {:from/:to | :agent}` (net
+`:was`/`:now` per form + red/green arc) → `query-lineage` /
+`query-form-history`. Human renderings on top of the same data: every
+history row carries `:at` (`yyyy-MM-dd HH:mm`, local zone — the raw epoch
+ms stays in the store); `query-history {format "text"}` is the story view;
+`query-changes {format "text"}` renders LINE diffs (LCS — context lines are
+never re-emitted as churn). EDN stays the agent-facing default.
+
 ## Write surface (each = tracked delta(s) + hot-reload + verification + provenance)
 
 - `ingest!` — load a whole namespace from source; returns `{:ns :forms}` or

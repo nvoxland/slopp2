@@ -277,3 +277,51 @@
           (is (re-find #"make f add ten" txt))
           (is (re-find #"plus-ten" txt))))
       (finally (api/close! sess)))))
+
+(deftest human-history-timestamps-diffs-and-intent-search
+  ;; the human-side gaps: WHEN did it happen, WHAT changed (as a diff, not
+  ;; two full sources), and finding a turn by what the user actually asked
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'ep.core seed)
+      (api/turn-begin! sess :agent "alice" :intent "teach h to double, loudly")
+      (api/edit-replace! sess 'ep.core 'h
+                         "(defn h [x]\n  ;; loud on purpose\n  (* x 2))"
+                         :prompt "make h double" :agent "alice")
+      (api/checkpoint! sess :label "h doubles" :agent "alice")
+      (api/turn-end! sess :agent "alice")
+      ;; a later, still-open episode so was/now spans a real line-level change
+      (api/edit-replace! sess 'ep.core 'h
+                         "(defn h [x]\n  ;; loud on purpose\n  (* x 3))"
+                         :prompt "actually triple" :agent "alice")
+      (testing "collapsed rows carry human-readable timestamps"
+        (let [rows (api/query-history sess :collapse true)
+              turn (first (keep :turn rows))
+              ep   (first (:episodes turn))]
+          (is (re-matches #"\d{4}-\d{2}-\d{2} \d{2}:\d{2}" (str (:at turn))))
+          (is (re-matches #"\d{4}-\d{2}-\d{2} \d{2}:\d{2}" (str (:at ep))))))
+      (testing "raw rows and the text story show when, too"
+        (is (re-matches #"\d{4}-\d{2}-\d{2} \d{2}:\d{2}"
+                        (str (:at (first (api/query-history sess))))))
+        (is (re-find #"@ \d{4}-\d{2}-\d{2} \d{2}:\d{2}"
+                     (api/query-history sess :collapse true :format "text"))))
+      (testing "contains searches TURN INTENTS in collapsed mode"
+        (let [rows (api/query-history sess :collapse true :contains "loudly")]
+          (is (= "teach h to double, loudly"
+                 (:intent (:turn (first rows))))))
+        (is (empty? (filter :turn (api/query-history sess :collapse true
+                                                     :contains "zz-no-match")))))
+      (testing "query-changes format=text renders line diffs with context"
+        (let [txt (api/query-changes sess :agent "alice" :format "text")]
+          (is (string? txt))
+          (is (re-find #"actually triple" txt))            ; the step's prompt
+          (is (re-find #"(?m)^\s+- .*\* x 2" txt))         ; removed line only
+          (is (re-find #"(?m)^\s+\+ .*\* x 3" txt))        ; added line only
+          ;; the unchanged line is CONTEXT, not re-emitted churn
+          (is (re-find #"(?m)^\s+;; loud on purpose" txt))
+          (is (not (re-find #"(?m)^\s*[-+] .*loud on purpose" txt)))))
+      (testing "the EDN shape is unchanged when no format is asked for"
+        (let [c (api/query-changes sess :agent "alice")]
+          (is (map? c))
+          (is (re-find #"\* x 2" (:was (first (:forms c)))))))
+      (finally (api/close! sess)))))

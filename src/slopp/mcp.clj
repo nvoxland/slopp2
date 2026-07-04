@@ -179,10 +179,11 @@
                   :properties {:agent {:type "string"} :note {:type "string"}}
                   :required ["agent"]}}
    {:name "query_changes"
-    :description "Net per-form diffs (:was/:now), steps, and the red/green verification arc — for YOUR open episode (pass :agent), or for ANY PAST span: pass :from/:to delta ids straight from a collapsed history row (drill-down)."
+    :description "Net per-form diffs (:was/:now), steps, and the red/green verification arc — for YOUR open episode (pass :agent), or for ANY PAST span: pass :from/:to delta ids straight from a collapsed history row (drill-down). format=text renders line diffs for humans."
     :inputSchema {:type "object"
                   :properties {:agent {:type "string"}
-                               :from {:type "string"} :to {:type "string"}}}}
+                               :from {:type "string"} :to {:type "string"}
+                               :format {:type "string" :enum ["edn" "text"]}}}}
    {:name "episode_revert"
     :description "Scrap your episode: roll every form you changed since your last checkpoint back to that stable spot, as ONE atomic verified group. Forms other agents also touched are skipped and reported in :skipped-shared, never stomped."
     :inputSchema {:type "object"
@@ -353,7 +354,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
         t            (assoc :test (cond-> {:ran (:test t 0) :pass (:pass t 0)
                                            :status (:status t :green)
                                            :scope (:scope t)}
-                                     (:staleness-detected t) (assoc :staleness-healed true)))
+                                    (:staleness-detected t) (assoc :staleness-healed true)))
         (:affected r) (assoc :affected (let [a (:affected r)]
                                          (if (= :all a) :all (count a))))
         (:hint r) (assoc :hint (:hint r))
@@ -405,12 +406,13 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
       "query_references"  (text (vec (api/query-references session (sym :ns) (sym :name))))
       "query_lineage"     (text (vec (api/query-lineage session (sym :ns) (sym :name))))
       "turn_begin"        (text (api/turn-begin! session :agent (:agent a)
-                                                  :intent (:intent a)
-                                                  :user (:user a)))
+                                                 :intent (:intent a)
+                                                 :user (:user a)))
       "turn_end"          (text (api/turn-end! session :agent (:agent a)
                                                :note (:note a)))
       "query_changes"     (text (api/query-changes session :agent (:agent a)
-                                                    :from (:from a) :to (:to a)))
+                                                   :from (:from a) :to (:to a)
+                                                   :format (:format a)))
       "episode_revert"    (text (-> (api/revert-episode! session
                                                          :agent (:agent a)
                                                          :prompt (:prompt a))
@@ -517,7 +519,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
       "branch_create"     (text (api/branch! session (:name a)))
       "branch_switch"     (text (api/branch-switch! session (:name a)))
       "branch_merge"      (text (api/branch-merge! session (:name a)
-                                                    :agent (:agent a)))
+                                                   :agent (:agent a)))
       "branch_delete"     (text (api/branch-delete! session (:name a)))
       "query_branches"    (text (api/query-branches session))
       "query_deps"        (text (api/query-deps session (sym :ns) (sym :name)))
@@ -536,7 +538,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)")
                                                   :moved :rewrote :test :group])
                                     (summarize (:verbose a))))
       "merge_from"        (text (api/merge! session (:dir a)
-                                              :agent (:agent a)))
+                                            :agent (:agent a)))
       "restart"           (do (api/restart! session) (text "restarted"))
       "build"             (text (api/build! session (:dir a)
                                             :main (some-> (:main a) symbol)
