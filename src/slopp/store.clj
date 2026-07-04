@@ -304,15 +304,19 @@
   "Append a `:commit` MILESTONE marker (P4-m7) — a named pointer at `target`
   (a delta id, normally the just-checkpointed head) with a human-facing
   `description`. The important-checkpoint grain above turns; git's annotated
-  tag, inside the journal. Returns [store' delta]."
-  [store description & {:keys [agent target status]}]
+  tag, inside the journal. `extra` merges op-specific payload into the delta
+  (P4-m8: `:tree` rendered-source snapshot, `:git-sha` import identity) —
+  it must not carry the core keys (:id :op :ns :parent :at :description
+  :target). Returns [store' delta]."
+  [store description & {:keys [agent target status extra]}]
   (let [[did store'] (gen-id store "d")
         delta (cond-> {:id did :parent (:id (last (:deltas store)))
                        :op :commit :ns '*session* :at (now-ms)
                        :description description
                        :target (or target (:id (last (:deltas store))))}
                 agent  (assoc :agent agent)
-                status (assoc :status status))]
+                status (assoc :status status)
+                extra  (as-> d (merge extra d)))]
     [(update store' :deltas conj delta) delta]))
 
 (defn record-turn

@@ -54,9 +54,28 @@
   `query-lineage` should match it (it matches `:form-id` and `:form-ids`),
   and add no-content marker ops to `replay-delta`'s marker case (else
   foreign-journal sync falls through to a full reload). `:commit` (P4-m7
-  milestones) is a marker.
+  milestones) is a marker — since P4-m8 its payload also carries `:tree`
+  (byte-exact rendered {ns source} snapshot) and, on imports, `:git-sha`.
 - `.slopp/` is gitignored; what users commit to VCS is an open Phase-4
   question (the delta DAG is meant to BE the history).
+
+## Git projection durability (P4-m8, `slopp.git`)
+
+- `git_map` (main store.db) pins each `:commit` delta → git sha at first
+  projection, keyed `(delta_id, fingerprint)` — branch journals share
+  main's prefix by VALUE, so shared markers resolve to one row;
+  fingerprint = SHA-256 of `[id at description target]` (a canonical tuple,
+  never the printed map).
+- **Native milestones re-derive from the journal** (`:tree` payload makes
+  each commit a pure function of its marker): the bare repo at
+  `.slopp/git` is a rebuildable cache — delete it + the git_map rows and
+  re-projection mints IDENTICAL shas.
+- **Imported commits (git push) exist only in the bare repo** (the pushed
+  pack); their shas are identity, never re-derived. Once anything has been
+  pushed in, `.slopp/git` is durable state — deleting it rewrites imported
+  history.
+- Projection ordering (crash-safe): journal marker → git objects →
+  git_map row → ref CAS; `ensure-projected!` repairs any interruption.
 
 ## m5a: journal-first commits (storage inversion)
 

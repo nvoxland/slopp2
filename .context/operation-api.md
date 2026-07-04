@@ -57,12 +57,15 @@ never re-emitted as churn). EDN stays the agent-facing default.
   tests, records a labeled `:checkpoint` delta. Never rewrites silently
   mid-edit — only at this explicit call. Add rules deliberately (they must be
   provably behavior-preserving) and note them in the normalize ns.
-- `commit-point!` — MILESTONE (P4-m7, slopp-internal; git integration
-  explicitly out of scope): the checkpoint pipeline, then a `:commit`
-  marker at the result with a human `description`. Green-gated (`:force`
-  records `:status :red` honestly); `:target` = retroactive pure marker.
+- `commit-point!` — MILESTONE (P4-m7): the checkpoint pipeline, then a
+  `:commit` marker at the result with a human `description`. Green-gated
+  (`:force` records `:status :red` honestly); `:target` = retroactive pure
+  marker (no `:tree`). Since P4-m8 the marker snapshots the rendered
+  `:tree` ({ns source}, byte-exact, sorted-map) — the git projection's
+  input — and `:extra` plumbs op-specific payload (imports add `:git-sha`).
   `query-commits` lists them; commit `:target`s anchor query-changes
-  `:from`/`:to` spans.
+  `:from`/`:to` spans. Projection/serving live in `slopp.git`, NOT here —
+  the write path stays JGit-free.
 - `restart!` — agent-callable fresh image (D5 escape hatch).
 - `build!` — materialize `.clj` files (the C1/C6 explicit build). With
   `:main` (qualified entry fn) it also emits the O4 native-binary recipe:

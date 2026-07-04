@@ -36,7 +36,8 @@
   conflict (ours live, theirs surfaced).
 - **Every write is a tracked delta** `{op, ns, prompt, agent, at, ...}`; the
   provenance stack is COMMIT POINT (named milestone, green-gated,
-  `commit_point`) → TURN (verbatim user
+  `commit_point`; carries a byte-exact rendered `:tree` snapshot — the git
+  projection's input, P4-m8) → TURN (verbatim user
   ask, `turn_begin`/`turn_end`; enforced on real servers) → EPISODE
   (per-agent work-unit between checkpoints, derived — nothing stored) →
   step → per-form version. Raw REPL eval may observe but never redefines
@@ -60,6 +61,7 @@
 | `slopp.http` | same dispatch over localhost HTTP: `/call` (curl), `/mcp` (native MCP, shared-server mode), `/metrics` |
 | `slopp.turn` | one-shot CLI for Claude Code hooks: verbatim-prompt turn markers appended out-of-band |
 | `slopp.build` | explicit build: files + GraalVM native-image recipe (O4) |
+| `slopp.git` | P4-m8 git compatibility: projects `:commit` milestones into a bare repo at `.slopp/git` (deterministic shas, `git_map` pinning); the git-protocol server rides on top |
 | `slopp.bench` / `slopp.benchmark` | metrics / scripted sample-app benchmark |
 
 ## Cross-cutting gotchas

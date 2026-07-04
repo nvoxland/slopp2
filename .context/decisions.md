@@ -257,7 +257,49 @@ the change here (same commit).
   (build! + one git commit per milestone + sha cross-link) was built and
   removed same-day — commit points are slopp-internal; whether/how to
   bridge to git remains an open question, to be driven by demand, not
-  built ahead of it.
+  built ahead of it. *Revised same day by P4-m8 (user-driven demand): the
+  bridge exists, but inverted — slopp SERVES the git protocol; commit
+  points stay slopp-internal-first.*
+
+- **P4-m8 — Git compatibility layer: serve the protocol, project the
+  milestones (user-requested; explicit revision of P4-m7's rejection).**
+  The user asked for a git-compatible surface: a standalone server any git
+  client can talk to (branches + commits + history), push/pull over the
+  regular git protocol, stable git-style ids as a COMPATIBILITY layer
+  (native `d<n>` stays authoritative). Shape decisions:
+  - **Grain: commit points = git commits.** Turns/episodes/checkpoints stay
+    invisible to git ("just the commits come out").
+  - **Ids are hashes, not mintable:** git clients re-hash every object — the
+    id IS the content hash. Stability therefore comes from DETERMINISM:
+    each native commit is a pure function of its marker delta. `git_map`
+    (main store.db, keyed delta_id+fingerprint) additionally pins delta→sha
+    at first projection; imported commits keep their pushed shas verbatim.
+  - **Eager capture, lazy projection:** `commit_point` snapshots the
+    rendered `:tree` (byte-exact, trivia intact, sorted-map, schemaless
+    payload — no migration) into the `:commit` delta; JGit projection
+    happens only in the git server, on demand (`slopp.git/ensure-projected!`
+    before every refs advertisement). Keeps JGit out of every agent
+    server's write path and makes concurrent projectors converge on
+    identical shas with no coordination. Cost accepted: tens of KB of
+    journal per milestone (rare top grain; delta-encoding is a recorded
+    follow-on). Markers WITHOUT `:tree` (pre-m8 history, retroactive
+    `:target`) backfill lossily (inter-form trivia isn't in deltas) — pinned
+    at first projection, never recomputed.
+  - **Journal order IS the chain:** a retroactive `:target` marker lands as
+    the NEWEST git commit carrying the OLDER tree. Git mirrors the journal;
+    it does not re-sort chronology.
+  - **Zed lesson applied** (their libgit2→CLI arc): never partially
+    reimplement git semantics — JGit owns all object/pack/wire format; and
+    being the SERVER sidesteps auth entirely (the git client owns
+    credentials/SSH/config). Server-only v1; slopp-as-client is a follow-on.
+  - **Red pushes land honestly** (user-confirmed): a push that compiles but
+    turns tests red is accepted and recorded `:status :red`; only compile
+    failures reject. Matches the write-model (edits record, milestones
+    gate).
+  - Ordering invariant (crash-safe): journal marker → git objects
+    (content-addressed, idempotent) → git_map row (INSERT OR IGNORE +
+    read-back) → ref CAS. Every step derivable from the previous;
+    `ensure-projected!` repairs interruptions.
 
 - **SG — clj-surgeon-inspired structural ops (user-directed borrow).**
   Compared against realgenekim/clj-surgeon (stateless babashka file

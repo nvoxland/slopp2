@@ -1537,9 +1537,13 @@
   a red verification refuses the milestone (the checkpoint still stands —
   fix and retry) unless `:force true`, which records `:status :red`
   honestly. With `:target` (a past delta id) it is a pure retroactive
-  marker: no checkpoint runs, status is derived from the log at that spot."
-  [session description & {:keys [agent force target]}]
-  (let [mark! (fn [target status extra]
+  marker: no checkpoint runs, status is derived from the log at that spot —
+  and no `:tree` snapshot is captured (the live store is past the target by
+  definition; projection backfills, lossily).
+  `:extra` merges op-specific payload into the marker delta (P4-m8 uses it
+  for `:git-sha` on imported commits)."
+  [session description & {:keys [agent force target extra]}]
+  (let [mark! (fn [target status result-extra delta-extra]
                 (let [v (volatile! nil)]
                   (commit-appended!
                    session
@@ -1547,35 +1551,43 @@
                      (let [[st2 d] (store/record-commit base description
                                                         :agent agent
                                                         :target target
-                                                        :status status)]
+                                                        :status status
+                                                        :extra delta-extra)]
                        (vreset! v d)
                        st2))
                    [])
                   (merge {:commit (:id @v) :target target :status status
                           :description description}
-                         extra)))]
+                         result-extra)))]
     (cond
       (str/blank? (str description))
       {:error "a commit point needs a human-facing :description"}
 
       target
       (if (some #(= target (:id %)) (store/deltas (:store @session)))
-        (mark! target (status-at (:store @session) target) {})
+        (mark! target (status-at (:store @session) target) {} extra)
         {:error (str "no delta " target " in this branch's history")})
 
       :else
       (let [cp     (checkpoint! session :label description :agent agent)
-            head   (:id (last (store/deltas (:store @session))))
+            st     (:store @session)
+            head   (:id (last (store/deltas st)))
             status (if-let [t (:test cp)]
                      (if (zero? (+ (:fail t 0) (:error t 0))) :green :red)
-                     (status-at (:store @session) head))
-            status (if (= :unknown status) :green status)] ; nothing ever ran red
+                     (status-at st head))
+            status (if (= :unknown status) :green status) ; nothing ever ran red
+            ;; P4-m8: snapshot the rendered tree — byte-exact, trivia intact —
+            ;; so the git projection is a pure function of this marker delta
+            tree   (into (sorted-map)
+                         (map (fn [n] [n (render/render-ns st n)]))
+                         (keys (:namespaces st)))]
         (if (and (= :red status) (not force))
           {:error (str "verification is RED — milestone refused (your work is "
                        "checkpointed; fix and retry, or :force true to record "
                        "a red milestone honestly)")
            :status :red :checkpoint (:checkpoint cp) :test (:test cp)}
-          (mark! head status {:checkpoint (:checkpoint cp)}))))))
+          (mark! head status {:checkpoint (:checkpoint cp)}
+                 (merge {:tree tree} extra)))))))
 
 (defn query-commits
   "Milestones, newest first:
