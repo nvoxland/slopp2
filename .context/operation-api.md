@@ -131,7 +131,15 @@ Two transports share the SAME dispatch (`mcp/handle`):
   reason on the pusher's terminal. `refs/heads/wip/<branch>` mirrors
   un-milestone'd live state (read-only, deleted when clean) — tools
   `git diff origin/main..origin/wip/main`. Localhost-only, no auth.
-  GOTCHA: keep
+  **Embedded (M7):** `slopp.mcp/-main` on a durable dir ALSO opens this
+  listener in-process on a dir-DERIVED port (`git/derived-port` — stable
+  across restarts so a saved `git remote` keeps working; a taken port
+  falls back to ephemeral; the actual `:port`/`:url` is returned). The
+  listener keeps its OWN lazy session, so a push never perturbs the
+  agent's checkout. The `query_git` tool surfaces `:git-url` (stashed on
+  the session by `-main`). So the agent's own server IS the git remote —
+  no external daemon. `slopp.git`'s own `-main` also defaults its port to
+  `derived-port` now. GOTCHA: keep
   `slopp.git` reflection-free — reflective JGit calls resolve classes via
   the per-thread classloader and break on HTTP dispatch threads (only
   visible under add-lib REPLs, but the hints also keep the hot path

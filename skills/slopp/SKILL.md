@@ -60,7 +60,10 @@ Server: `clojure -M -m slopp.mcp` (stdio) from the slopp repo.
    to any git client at `http://127.0.0.1:<port>/slopp.git` — clone, fetch,
    and push all work (pushes import through the verified pipeline); each
    milestone's `:sha` in query_commits is its git commit id, and
-   `wip/<branch>` refs mirror un-milestone'd live state (read-only).
+   `wip/<branch>` refs mirror un-milestone'd live state (read-only). Your
+   OWN MCP server already serves this — `query_git` gives the remote URL
+   (no external daemon), so "push/pull between git and slopp" is just
+   `git remote add slopp <url>` then normal git.
 
 ## Choosing the right write tool
 
@@ -168,7 +171,7 @@ ns_add_require ns_remove_require · edit_add_form edit_replace_form
 edit_delete_form edit_subform edit_group edit_rename edit_extract
 edit_extract_ns edit_move edit_revert episode_revert ns_rename
 fix_declares · branch_create branch_switch branch_merge branch_delete
-merge_from · test_run checkpoint commit_point query_commits
+merge_from · test_run checkpoint commit_point query_commits query_git
 restart build help
 
 ## Shipping

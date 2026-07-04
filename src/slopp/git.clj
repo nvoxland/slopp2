@@ -725,24 +725,48 @@
           (try (status! ex 500) (catch Throwable _)))
         (finally (.close ex))))))
 
+(defn derived-port
+  "A localhost port DERIVED from the store dir — stable across restarts, so
+  a `git remote` saved against it keeps working next session. In the
+  private range [49152, 65535]; a collision (a second server on the same
+  dir) falls back to an ephemeral port at bind time (see `start-server!`),
+  so this is a preference, not a guarantee."
+  [dir]
+  (+ 49152 (mod (hash (str dir)) 16384)))
+
+(defn- bind-localhost!
+  "HttpServer on 127.0.0.1:port, falling back to an ephemeral port if that
+  one is taken (so a shared derived port never blocks startup)."
+  ^HttpServer [port]
+  (try
+    (HttpServer/create (InetSocketAddress. "127.0.0.1" (int port)) 0)
+    (catch java.net.BindException _
+      (when (zero? (int port)) (throw (java.net.BindException. "no port free")))
+      (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0))))
+
 (defn start-server!
   "Serve the git smart-HTTP protocol for the store at `:dir` on 127.0.0.1
   (localhost-only, like every slopp transport). Clone with
   `git clone http://127.0.0.1:<port>/slopp.git`; pushes import through the
   full verified write pipeline. The api session (image included) boots
   lazily on the first push — clone/fetch-only servers never pay for it.
-  Returns {:server :ctx :session :port} for stop-server!."
+  The requested `port` is a PREFERENCE — if it's taken, an ephemeral port
+  is bound instead; the actual bound port is returned as `:port`.
+  Returns {:server :ctx :session :port :url} for stop-server!."
   [port {:keys [dir]}]
   (when (str/blank? (str dir))
     (throw (ex-info "the git server needs a durable store :dir" {})))
   (let [ctx    (open-ctx! dir)
+        server (bind-localhost! port)
+        actual (.getPort (.getAddress server))
         srv    {:ctx     ctx
+                :server  server
                 :session (delay (api/open! {:dir (str dir)}))
-                :port    port}
-        server (HttpServer/create (InetSocketAddress. "127.0.0.1" (int port)) 0)]
+                :port    actual
+                :url     (str "http://127.0.0.1:" actual "/slopp.git")}]
     (.createContext server "/slopp.git" (git-handler srv))
     (.start server)
-    (assoc srv :server server)))
+    srv))
 
 (defn stop-server! [{:keys [^HttpServer server ctx session]}]
   (.stop server 0)
@@ -752,9 +776,8 @@
   nil)
 
 (defn -main [& [port dir]]
-  (let [port (Long/parseLong (or port "7457"))
-        dir  (or dir (System/getProperty "user.dir"))]
-    (start-server! port {:dir dir})
-    (println (str "slopp git server: http://127.0.0.1:" port
-                  "/slopp.git  (store: " dir ")"))
+  (let [dir  (or dir (System/getProperty "user.dir"))
+        port (if port (Long/parseLong port) (derived-port dir))
+        srv  (start-server! port {:dir dir})]
+    (println (str "slopp git server: " (:url srv) "  (store: " dir ")"))
     @(promise)))

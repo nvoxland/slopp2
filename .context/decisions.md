@@ -335,6 +335,25 @@ the change here (same commit).
     gc (maintenance follow-on). A store with zero milestones gets no wip
     ref (no baseline). Hidden-namespace variant (refs/slopp/wip/*) is a
     one-line change if branch-listing noise ever bothers.
+  - **Embedded listener (M7, user-requested):** the agent's OWN MCP server
+    (`slopp.mcp/-main`, durable dir) opens the git listener in-process — no
+    external daemon to run — so "push/pull between local git and slopp" is
+    `git remote add slopp <url>` then normal git. Design decisions: (a) an
+    in-process PORT listener, not a stdio-spawned `git-upload-pack`
+    subprocess — git's native transport is a stdio pipe, but the MCP
+    server's stdio is owned by JSON-RPC framing, and a spawned process
+    would pay full JVM+deps startup per git command (viable later as a
+    native-image binary; wrong default now). (b) The port is DERIVED from
+    the store dir (`git/derived-port`, private range, stable across
+    restarts so a saved remote survives), with an ephemeral fallback when
+    two servers share a dir (first wins the stable port); `query_git`
+    reports whichever this server bound. (c) The listener gets its OWN lazy
+    api session (second image, first-push only) — NOT the agent's live
+    session — so a push's branch-switch/edits never perturb the agent's
+    checkout; the agent absorbs the results through its normal
+    `sync-with-journal!`. Git remains optional: a bind failure logs to
+    stderr and MCP still serves. Server-only still holds — slopp never acts
+    as a git CLIENT; the user's git owns auth.
   - **v1 limits (recorded, not accidental):** localhost-only, no auth; no
     branch creation/deletion/tags over push (git clients can't push to a
     store with zero milestones — the first milestone comes from slopp);

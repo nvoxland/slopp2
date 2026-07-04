@@ -8,7 +8,8 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [cheshire.core :as json]
-            [slopp.api :as api]))
+            [slopp.api :as api]
+            [slopp.git :as git]))
 
 (def ^:private protocol-version "2024-11-05")
 
@@ -202,6 +203,9 @@
                   :required ["description"]}}
    {:name "query_commits"
     :description "Milestones, newest first: description, status, human time, and target delta id (plug targets into query_changes from/to for a between-milestones diff). Rows carry :sha — the milestone's git commit id — once the git projection has minted it (slopp.git server; imported commits keep their pushed sha)."
+    :inputSchema {:type "object" :properties {}}}
+   {:name "query_git"
+    :description "The git remote URL for THIS session's store, if the embedded git listener is running (durable sessions only). Hand it to `git remote add slopp <url>`, then clone/fetch/push over the regular git protocol: milestones (commit_point) are the commits, pushes import through verification, and wip/<branch> mirrors un-milestone'd live state. No external server needed."
     :inputSchema {:type "object" :properties {}}}
    {:name "test_run"
     :description "Run tests in the live image and record the result. No :ns = EVERY namespace's tests in one call (the full-project sweep). :only restricts to named tests; :fresh true restarts first for a guaranteed-faithful run."
@@ -530,6 +534,15 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                     :force (:force a)
                                                     :target (:target a)))
       "query_commits"      (text (api/query-commits session))
+      "query_git"          (text (if-let [u (:git-url @session)]
+                                   {:url u
+                                    :remote (str "git remote add slopp " u)
+                                    :note (str "milestones (commit_point) are the commits; "
+                                               "push imports through verification; "
+                                               "wip/<branch> = live un-milestone'd state")}
+                                   {:error (str "no git listener on this session"
+                                                " (ephemeral session, or the port"
+                                                " couldn't bind)")}))
       "test_run"          (text (api/test-run! session
                                                (when (:ns a) (sym :ns))
                                                :only (some->> (:only a) (mapv symbol))
@@ -603,11 +616,27 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
 (defn -main
   "Start the stdio MCP server. An optional `dir` argument makes the session
   durable (store at <dir>/.slopp/store.db); without it the session is
-  ephemeral."
+  ephemeral. A durable session ALSO opens an in-process git smart-HTTP
+  listener on a dir-derived port (localhost), so the user can point their
+  git client at slopp with no external daemon — `query_git` reports the
+  URL. The listener has its OWN lazy api session so a push never perturbs
+  this session's checkout; it boots only on the first push."
   [& [dir]]
   (let [session (api/open! (cond-> {:warm-spare? true}
                              dir (assoc :dir dir)))]
     (swap! session assoc :require-turns? true)   ; real servers enforce turns
+    (when dir
+      (try
+        (let [srv (git/start-server! (git/derived-port dir) {:dir dir})]
+          (swap! session assoc :git-server srv :git-url (:url srv))
+          ;; stdout is the JSON-RPC channel; banner goes to stderr
+          (binding [*out* *err*]
+            (println (str "slopp git remote: " (:url srv)))))
+        (catch Throwable t                       ; git is optional; MCP must serve
+          (binding [*out* *err*]
+            (println (str "slopp git remote unavailable: " (.getMessage t)))))))
     (try
       (serve! session (io/reader System/in) (io/writer System/out))
-      (finally (api/close! session)))))
+      (finally
+        (when-let [srv (:git-server @session)] (git/stop-server! srv))
+        (api/close! session)))))
