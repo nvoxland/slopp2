@@ -10,10 +10,4 @@ eval-templates/
 .idea
 *.iml
 notes
-# projects/ is scratch EXCEPT committed benchmark specs + run history
-projects/*
-!projects/*/
-projects/*/*
-!projects/*/SPEC.md
-!projects/*/RUNS.md
-!projects/*/accept.sh
+projects

@@ -40,8 +40,11 @@ and **token cost** (chars/4 of the JSON actually sent/received through
 
 ## Benchmark repeatability (standing rule, user-requested)
 
-Every eval-project dir under `projects/` carries three COMMITTED files (the
-only tracked things there — gitignore negations handle it):
+Nothing under `projects/` is committed — the whole directory is gitignored
+(user decision, 2026-07-04; it briefly had gitignore negations tracking the
+files below). Every eval-project dir still carries three LOCAL files that
+make reruns reproducible — keep maintaining them, just never `git add`
+them:
 - **`SPEC.md`** — the exact task text given to agents + the VERBATIM harness
   wrapper prompt (only ports/paths substituted) + how to regenerate the seed
   + measurement sources. Write it BEFORE launching agents. The wrapper
