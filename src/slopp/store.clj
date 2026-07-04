@@ -315,17 +315,6 @@
                 status (assoc :status status))]
     [(update store' :deltas conj delta) delta]))
 
-(defn record-export
-  "Append an `:export` delta — commit point `commit-id` was published to git
-  as `sha` under `dir`. The slopp→git cross-link (the git side carries the
-  reverse link in its commit message). Returns [store' delta]."
-  [store commit-id sha dir]
-  (let [[did store'] (gen-id store "d")
-        delta {:id did :parent (:id (last (:deltas store)))
-               :op :export :ns '*session* :at (now-ms)
-               :commit commit-id :git-sha sha :dir dir}]
-    [(update store' :deltas conj delta) delta]))
-
 (defn record-turn
   "Append a turn marker (:turn-begin carries the VERBATIM user ask — the root
   intent of everything that follows; :turn-end closes the bracket, stable or
@@ -359,7 +348,7 @@
   [store d]
   (let [with-d (fn [st] (bump-next-id (update st :deltas conj d) d))]
     (case (:op d)
-      (:verify :checkpoint :merge :turn-begin :turn-end :commit :export)
+      (:verify :checkpoint :merge :turn-begin :turn-end :commit)
       (with-d store)
 
       (:replace :rename :normalize)

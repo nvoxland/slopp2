@@ -57,15 +57,12 @@ never re-emitted as churn). EDN stays the agent-facing default.
   tests, records a labeled `:checkpoint` delta. Never rewrites silently
   mid-edit — only at this explicit call. Add rules deliberately (they must be
   provably behavior-preserving) and note them in the normalize ns.
-- `commit-point!` — MILESTONE (P4-m7): the checkpoint pipeline, then a
-  `:commit` marker at the result with a human `description`. Green-gated
-  (`:force` records `:status :red` honestly); `:target` = retroactive pure
-  marker. `query-commits` lists them (with `:git-sha` once exported);
-  commit `:target`s anchor query-changes `:from`/`:to` spans.
-- `git-export!` — slopp→git projection: `build!` + one git commit per
-  milestone (description + `slopp-commit:`/`slopp-target:` trailers) +
-  `:export` delta with the sha. Head-only; refuses when content follows the
-  commit point.
+- `commit-point!` — MILESTONE (P4-m7, slopp-internal; git integration
+  explicitly out of scope): the checkpoint pipeline, then a `:commit`
+  marker at the result with a human `description`. Green-gated (`:force`
+  records `:status :red` honestly); `:target` = retroactive pure marker.
+  `query-commits` lists them; commit `:target`s anchor query-changes
+  `:from`/`:to` spans.
 - `restart!` — agent-callable fresh image (D5 escape hatch).
 - `build!` — materialize `.clj` files (the C1/C6 explicit build). With
   `:main` (qualified entry fn) it also emits the O4 native-binary recipe:

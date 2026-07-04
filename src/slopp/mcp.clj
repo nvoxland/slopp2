@@ -201,16 +201,8 @@
                                :target {:type "string"}}
                   :required ["description"]}}
    {:name "query_commits"
-    :description "Milestones, newest first: description, status, human time, target delta id (plug targets into query_changes from/to for a between-milestones diff), and git-sha when exported."
+    :description "Milestones, newest first: description, status, human time, and target delta id (plug targets into query_changes from/to for a between-milestones diff)."
     :inputSchema {:type "object" :properties {}}}
-   {:name "git_export"
-    :description "Publish the latest commit point (or commit=<id>) to git: build! the project into dir, one git commit with the milestone description + slopp cross-link trailers, and record the sha as an :export delta. Refused if content changed after the commit point — commit_point first."
-    :inputSchema {:type "object"
-                  :properties {:dir {:type "string"}
-                               :commit {:type "string"}
-                               :main {:type "string"}
-                               :name {:type "string"}}
-                  :required ["dir"]}}
    {:name "test_run"
     :description "Run tests in the live image and record the result. No :ns = EVERY namespace's tests in one call (the full-project sweep). :only restricts to named tests; :fresh true restarts first for a guaranteed-faithful run."
     :inputSchema {:type "object"
@@ -352,7 +344,7 @@ READ RESULTS: {:ok true ...} terse green · :failures = why (expected/actual)
          :warnings = fix with edit_rename per :suggest · :untested = add a test
 FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
          commit_point {description} <- MILESTONE: green-gated, the grain a
-         human diffs/reverts/publishes; git_export {dir} projects it to git")
+         human diffs and reverts to; coarser than checkpoints and turns")
 
 (defn- red? [t]
   (and t (pos? (+ (:fail t 0) (:error t 0)))))
@@ -538,10 +530,6 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                     :force (:force a)
                                                     :target (:target a)))
       "query_commits"      (text (api/query-commits session))
-      "git_export"         (text (api/git-export! session (:dir a)
-                                                  :commit (:commit a)
-                                                  :main (some-> (:main a) symbol)
-                                                  :name (:name a)))
       "test_run"          (text (api/test-run! session
                                                (when (:ns a) (sym :ns))
                                                :only (some->> (:only a) (mapv symbol))

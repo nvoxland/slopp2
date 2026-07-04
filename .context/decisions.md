@@ -239,26 +239,25 @@ the change here (same commit).
   server absorbs them via m5b sync, so the model never has to relay its own
   instructions. A turn may end red — failed turns are history too.
 
-- **P4-m7 — Commit points: the MILESTONE grain + the git projection
+- **P4-m7 — Commit points: the MILESTONE grain, purely in-journal
   (user-designed).** `commit_point {description, agent}` = the full
   checkpoint pipeline, then a `:commit` marker delta `{:description :target
-  :status :agent :at}` — a named pointer at the just-checkpointed head
-  (git's annotated tag, inside the journal; the grain above turns that a
-  human diffs/reverts/publishes). GREEN-GATED: red verification refuses the
+  :status :agent :at}` — a named pointer at the just-checkpointed head; the
+  better-controlled milestone above turn ends, episode ends, and plain
+  checkpoints, per branch. GREEN-GATED: red verification refuses the
   milestone (the checkpoint still stands) unless `:force true`, which
   records `:status :red` honestly. `:target <past delta id>` = pure
-  retroactive marker (status derived from the log). Markers-as-deltas ride
-  the journal, branch snapshots, and merge replay for free (`:commit`/
-  `:export` are no-content ops in `replay-delta`). Git interplay:
-  `git_export {dir}` builds the tree, makes ONE git commit per milestone
-  (description as message + `slopp-commit:`/`slopp-target:` trailers), and
-  records the sha as an `:export` delta — the two histories cross-link in
-  both directions; slopp keeps the rich record, git is the publication
-  surface. Export is head-only (content deltas after the commit point →
-  "commit first"); time-travel export deferred until demanded — rebuilding
-  a past store hits the :ingest-trivia reload wall in `replay-delta`.
-  Export commits are authored `slopp <slopp@local>` — authorship provenance
-  lives in the journal, not the projection.
+  retroactive marker (status derived from the log's last `:verify`).
+  Markers-as-deltas ride the journal, branch snapshots, and merge replay
+  for free (`:commit` is a no-content op in `replay-delta`). Surfaces:
+  `query_commits` (newest first; targets anchor query_changes from/to
+  between-milestone diffs), COMMIT rows in the collapsed history
+  (contains-searchable by description). **Git integration explicitly
+  REJECTED for now** (user, 2026-07-04): a `git_export` projection
+  (build! + one git commit per milestone + sha cross-link) was built and
+  removed same-day — commit points are slopp-internal; whether/how to
+  bridge to git remains an open question, to be driven by demand, not
+  built ahead of it.
 
 - **SG — clj-surgeon-inspired structural ops (user-directed borrow).**
   Compared against realgenekim/clj-surgeon (stateless babashka file

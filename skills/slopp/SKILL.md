@@ -54,8 +54,8 @@ Server: `clojure -M -m slopp.mcp` (stdio) from the slopp repo.
    `commit_point {description, agent}`: it checkpoints, then marks the spot
    with your description. It is green-gated (red tests refuse it; `force:
    true` records a red milestone honestly). `query_commits` lists
-   milestones; `git_export {dir}` publishes the latest one as a real git
-   commit.
+   milestones, and their targets plug into `query_changes {from, to}` for
+   a between-milestones diff.
 
 ## Choosing the right write tool
 
@@ -163,7 +163,7 @@ ns_add_require ns_remove_require · edit_add_form edit_replace_form
 edit_delete_form edit_subform edit_group edit_rename edit_extract
 edit_extract_ns edit_move edit_revert episode_revert ns_rename
 fix_declares · branch_create branch_switch branch_merge branch_delete
-merge_from · test_run checkpoint commit_point query_commits git_export
+merge_from · test_run checkpoint commit_point query_commits
 restart build help
 
 ## Shipping

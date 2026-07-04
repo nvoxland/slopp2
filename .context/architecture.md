@@ -36,7 +36,7 @@
   conflict (ours live, theirs surfaced).
 - **Every write is a tracked delta** `{op, ns, prompt, agent, at, ...}`; the
   provenance stack is COMMIT POINT (named milestone, green-gated,
-  `commit_point`; projected to git via `git_export`) → TURN (verbatim user
+  `commit_point`) → TURN (verbatim user
   ask, `turn_begin`/`turn_end`; enforced on real servers) → EPISODE
   (per-agent work-unit between checkpoints, derived — nothing stored) →
   step → per-form version. Raw REPL eval may observe but never redefines

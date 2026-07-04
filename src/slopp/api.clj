@@ -11,7 +11,6 @@
   the live image from it. Without `:dir` the session is ephemeral (tests,
   scratch)."
   (:require [clojure.java.io :as io]
-            [clojure.java.shell :as shell]
             [clojure.set :as set]
             [clojure.string :as str]
             [rewrite-clj.node :as n]
@@ -1580,27 +1579,19 @@
 
 (defn query-commits
   "Milestones, newest first:
-  [{:commit :description :target :status :agent :at :git-sha}]. `:git-sha`
-  joins the latest `:export` delta that published that commit point; commit
-  `:target` ids plug straight into query-changes :from/:to for
-  between-milestone diffs."
+  [{:commit :description :target :status :agent :at}]. Commit `:target` ids
+  plug straight into query-changes :from/:to for between-milestone diffs."
   [session]
-  (let [ds      (store/deltas (:store @session))
-        exports (into {} (keep (fn [d] (when (= :export (:op d))
-                                         [(:commit d) d])))
-                      ds)]
-    (->> ds
-         (filter #(= :commit (:op %)))
-         reverse
-         (mapv (fn [d]
-                 (cond-> {:commit      (:id d)
-                          :description (:description d)
-                          :target      (:target d)
-                          :status      (:status d)
-                          :at          (human-time (:at d))}
-                   (:agent d)          (assoc :agent (:agent d))
-                   (exports (:id d))   (assoc :git-sha
-                                              (:git-sha (exports (:id d))))))))))
+  (->> (store/deltas (:store @session))
+       (filter #(= :commit (:op %)))
+       reverse
+       (mapv (fn [d]
+               (cond-> {:commit      (:id d)
+                        :description (:description d)
+                        :target      (:target d)
+                        :status      (:status d)
+                        :at          (human-time (:at d))}
+                 (:agent d) (assoc :agent (:agent d)))))))
 
 (defn edit-subform!
   "Item 5 — paredit's invariant, agent-shaped: replace the UNIQUE structural
@@ -2461,60 +2452,3 @@
                      {:binary bin
                       :launcher "src/native/main.clj"
                       :script   "build-native.sh"})))))))
-
-(defn git-export!
-  "Publish a commit point to git (the slopp→git projection): build! the tree
-  into `dir`, `git init` if needed, and make ONE git commit whose message is
-  the milestone description plus slopp cross-link trailers; then record an
-  `:export` delta carrying the resulting sha. Only the LATEST state is
-  exportable — content deltas after the commit point → error (record a new
-  commit point first). `:commit` selects a specific commit point (default:
-  the most recent); `:main`/`:name` pass through to build!'s native recipe."
-  [session dir & {:keys [commit main] bin-name :name}]
-  (let [ds (store/deltas (:store @session))
-        c  (if commit
-             (first (filter #(and (= :commit (:op %)) (= commit (:id %))) ds))
-             (last (filter #(= :commit (:op %)) ds)))]
-    (cond
-      (nil? c)
-      {:error (if commit
-                (str "no commit point " commit " in this branch's history")
-                "no commit points yet — record one with commit_point first")}
-
-      (seq (->> ds
-                (drop-while #(not= (:id c) (:id %)))
-                rest
-                (filter #(contains? content-ops (:op %)))))
-      {:error (str "content changes exist after commit point " (:id c)
-                   " — record a new commit point first")}
-
-      :else
-      (let [b (build! session dir :main main :name bin-name)]
-        (if (:error b)
-          b
-          (let [git (fn [& args]
-                      (apply shell/sh "git" (concat args [:dir dir])))]
-            (when-not (.exists (io/file dir ".git"))
-              (git "init" "-q"))
-            (git "add" "-A")
-            (let [msg (str (:description c)
-                           "\n\nslopp-commit: " (:id c)
-                           "\nslopp-target: " (:target c))
-                  cr  (git "-c" "user.name=slopp" "-c" "user.email=slopp@local"
-                           "commit" "-q" "-m" msg)]
-              (cond
-                (zero? (:exit cr))
-                (let [sha (str/trim (:out (git "rev-parse" "HEAD")))]
-                  (commit-appended!
-                   session
-                   #(first (store/record-export % (:id c) sha (str dir)))
-                   [])
-                  {:exported (:id c) :git-sha sha :dir (:built b)})
-
-                (re-find #"nothing to commit"
-                         (str (:out cr) (:err cr)))
-                {:unchanged true :commit (:id c)}
-
-                :else
-                {:error (str "git commit failed: "
-                             (str/trim (str (:err cr) " " (:out cr))))}))))))))

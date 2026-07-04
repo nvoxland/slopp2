@@ -53,8 +53,8 @@
   persistence (payload column is schemaless) — but decide whether
   `query-lineage` should match it (it matches `:form-id` and `:form-ids`),
   and add no-content marker ops to `replay-delta`'s marker case (else
-  foreign-journal sync falls through to a full reload). `:commit`/`:export`
-  (P4-m7 milestones) are markers.
+  foreign-journal sync falls through to a full reload). `:commit` (P4-m7
+  milestones) is a marker.
 - `.slopp/` is gitignored; what users commit to VCS is an open Phase-4
   question (the delta DAG is meant to BE the history).
 

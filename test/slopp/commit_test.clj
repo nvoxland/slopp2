@@ -1,11 +1,10 @@
 (ns slopp.commit-test
   "Commit points (P4-m7): named MILESTONE markers in a branch's history — the
-  human-important grain above turns — and their git projection (git-export!).
+  human-important grain above turn ends, episode ends, and checkpoints.
   A commit point implies a checkpoint, is green-gated (:force records a red
   one honestly), and is a plain :commit marker delta so it rides the journal,
   branch snapshots, and merges for free."
   (:require [clojure.test :refer [deftest is testing]]
-            [clojure.java.shell :as sh]
             [slopp.store :as store]
             [slopp.mcp]
             [slopp.api :as api]))
@@ -100,46 +99,11 @@
                                          :target "d99999")))))
       (finally (api/close! sess)))))
 
-(deftest commit-and-export-replay-as-markers
-  ;; foreign-journal sync (m5b) must treat both new ops as no-content markers
+(deftest commit-replays-as-a-marker
+  ;; foreign-journal sync (m5b) must treat the new op as a no-content marker
   (let [st (store/ingest (store/empty-store) 'cm.core seed)]
     (is (some? (store/replay-delta st {:id "d90" :op :commit :ns '*session*
-                                       :description "m" :target "d0" :at 1})))
-    (is (some? (store/replay-delta st {:id "d91" :op :export :ns '*session*
-                                       :commit "d90" :git-sha "abc" :at 1})))))
-
-(deftest git-export-publishes-the-milestone
-  (let [dir  (str (System/getProperty "java.io.tmpdir")
-                  "/slopp-git-" (System/nanoTime))
-        sess (api/open!)]
-    (try
-      (api/ingest! sess 'cm.core seed)
-      (testing "no commit point yet → refused"
-        (is (re-find #"commit_point" (:error (api/git-export! sess dir)))))
-      (api/edit-replace! sess 'cm.core 'f-t "(deftest f-t (is (= 11 (f 1))))"
-                         :prompt "red" :agent "a")
-      (api/edit-replace! sess 'cm.core 'f "(defn f [x] (+ x 10))"
-                         :prompt "green" :agent "a")
-      (api/commit-point! sess "v1 ships" :agent "a")
-      (let [r (api/git-export! sess dir)]
-        (is (nil? (:error r)) (pr-str r))
-        (is (string? (:git-sha r)))
-        (testing "a REAL git commit: description as message + slopp cross-link"
-          (let [msg (:out (sh/sh "git" "log" "-1" "--format=%B" :dir dir))]
-            (is (re-find #"v1 ships" msg))
-            (is (re-find #"slopp-commit: d\d+" msg))))
-        (testing "the export is itself provenance: :export delta, joined by query-commits"
-          (is (some #(= :export (:op %)) (store/deltas (:store @sess))))
-          (is (= (:git-sha r) (:git-sha (first (api/query-commits sess)))))))
-      (testing "re-export with nothing new is a no-op, not a failure"
-        (is (:unchanged (api/git-export! sess dir))))
-      (testing "content past the commit point refuses export (commit first)"
-        (api/edit-replace! sess 'cm.core 'g "(defn g [x] :later)"
-                           :prompt "later" :agent "a")
-        (is (re-find #"commit point" (:error (api/git-export! sess dir)))))
-      (finally
-        (api/close! sess)
-        (sh/sh "rm" "-rf" dir)))))
+                                       :description "m" :target "d0" :at 1})))))
 
 (deftest commit-point-rides-the-mcp-surface
   (let [sess (api/open!)]
