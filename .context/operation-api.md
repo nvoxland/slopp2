@@ -115,6 +115,16 @@ Two transports share the SAME dispatch (`mcp/handle`):
 - **HTTP** (`clojure -M -m slopp.http <port> [dir]`, or
   `http/start-server!` programmatically) — localhost-only JSON for
   curl/scripting/evals; `/metrics` returns per-call payload sizes.
+- **Git smart-HTTP** (`clojure -M -m slopp.git <port> [dir]`, or
+  `git/start-server!`) — P4-m8: any git client clones/fetches the
+  milestone projection from `http://127.0.0.1:<port>/slopp.git`.
+  JGit's UploadPack owns the wire format (stateless RPC, protocol v0);
+  `ensure-projected!` runs before every refs advertisement, so foreign
+  commit points from live sessions are served without a restart.
+  Localhost-only, no auth. GOTCHA: keep `slopp.git` reflection-free —
+  reflective JGit calls resolve classes via the per-thread classloader
+  and break on HTTP dispatch threads (only visible under add-lib REPLs,
+  but the hints also keep the hot path cheap).
 
 ## MCP transport (`slopp.mcp`)
 

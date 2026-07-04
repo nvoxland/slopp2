@@ -24,12 +24,17 @@
             [slopp.build :as build]
             [slopp.db :as db]
             [slopp.render :as render])
-  (:import [java.nio.charset StandardCharsets]
+  (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
+           [java.net InetSocketAddress]
+           [java.nio.charset StandardCharsets]
            [java.time Instant ZoneOffset]
+           [java.util.zip GZIPInputStream]
            [org.eclipse.jgit.dircache DirCache DirCacheEntry]
            [org.eclipse.jgit.lib CommitBuilder Constants FileMode ObjectId
             PersonIdent Repository]
-           [org.eclipse.jgit.storage.file FileRepositoryBuilder]))
+           [org.eclipse.jgit.storage.file FileRepositoryBuilder]
+           [org.eclipse.jgit.transport PacketLineOut
+            RefAdvertiser$PacketLineOutRefAdvertiser UploadPack]))
 
 ;; ---------------------------------------------------------------------------
 ;; repo + mapping table
@@ -171,7 +176,7 @@
 ;; ---------------------------------------------------------------------------
 ;; commits + refs
 
-(defn- author-email [agent]
+(defn- author-email ^String [agent]
   (let [s (str/replace (str agent) #"[^A-Za-z0-9._-]" ".")]
     (str (if (str/blank? s) "slopp" s) "@slopp")))
 
@@ -196,14 +201,16 @@
                     (.setObjectId blob)))))
       (.finish b)
       (let [tree-id (.writeTree dc ins)
-            at      (Instant/ofEpochMilli (:at d))
+            at      (Instant/ofEpochMilli (long (:at d)))
             who     (str (or (:agent d) "slopp"))
+            ;; reflection-free ctors matter: reflective JGit calls resolve
+            ;; classes per-thread and break on server dispatch threads
             cb      (doto (CommitBuilder.)
                       (.setTreeId tree-id)
                       (.setAuthor (PersonIdent. who (author-email (:agent d))
-                                                at ZoneOffset/UTC))
+                                                at ^java.time.ZoneId ZoneOffset/UTC))
                       (.setCommitter (PersonIdent. "slopp" "slopp@slopp"
-                                                   at ZoneOffset/UTC))
+                                                   at ^java.time.ZoneId ZoneOffset/UTC))
                       (.setMessage (commit-message d)))]
         (when parent-sha
           (.setParentId cb (ObjectId/fromString parent-sha)))
@@ -262,7 +269,7 @@
   [dir]
   (let [root (io/file dir ".slopp" "branches")]
     (when (.isDirectory root)
-      (for [f (.listFiles root)
+      (for [^java.io.File f (.listFiles root)
             :when (and (.isDirectory f)
                        (.exists (io/file f ".slopp" "store.db")))]
         [(.getName f) (str f)]))))
@@ -285,3 +292,106 @@
       (doseq [[nm sha] refs :when sha]
         (set-branch-ref! repo nm sha))
       {:refs refs})))
+
+;; ---------------------------------------------------------------------------
+;; smart-HTTP server (M2: clone/fetch; M3 adds receive-pack)
+;;
+;; The protocol endpoints, verbatim from the smart-http spec:
+;;   GET  /slopp.git/info/refs?service=git-upload-pack   → refs advertisement
+;;   POST /slopp.git/git-upload-pack                     → pack negotiation
+;; JGit's UploadPack owns the wire format (setBiDirectionalPipe false =
+;; stateless RPC); we only route bytes. v0 protocol — the Git-Protocol:
+;; version=2 header is deliberately ignored (spec-legal fallback).
+
+(defn- status! [^HttpExchange ex code]
+  (.sendResponseHeaders ex code -1)
+  (.close ex))
+
+(defn- q-params [^HttpExchange ex]
+  (into {}
+        (keep (fn [kv]
+                (let [[k v] (str/split kv #"=" 2)]
+                  [k (java.net.URLDecoder/decode (str v) "UTF-8")])))
+        (some-> (.getQuery (.getRequestURI ex)) (str/split #"&"))))
+
+(defn- request-body ^java.io.InputStream [^HttpExchange ex]
+  (cond-> (.getRequestBody ex)
+    (= "gzip" (some-> (.getFirst (.getRequestHeaders ex) "Content-Encoding")
+                      str/lower-case))
+    (GZIPInputStream.)))
+
+(defn- advertise-refs! [ctx ^HttpExchange ex]
+  (let [service (get (q-params ex) "service")]
+    (if (= "git-upload-pack" service)
+      (do (ensure-projected! ctx)
+          (doto (.getResponseHeaders ex)
+            (.add "Content-Type"
+                  "application/x-git-upload-pack-advertisement")
+            (.add "Cache-Control" "no-cache"))
+          (.sendResponseHeaders ex 200 0)
+          (with-open [os (.getResponseBody ex)]
+            (let [pck (PacketLineOut. os)]
+              (.writeString pck "# service=git-upload-pack\n")
+              (.end pck)
+              (-> (doto (UploadPack. ^Repository (:repo ctx))
+                    (.setBiDirectionalPipe false))
+                  (.sendAdvertisedRefs
+                   (RefAdvertiser$PacketLineOutRefAdvertiser. pck))))))
+      ;; dumb protocol / receive-pack (until M3): refused, per plan
+      (status! ex 403))))
+
+(defn- upload-pack! [ctx ^HttpExchange ex]
+  (doto (.getResponseHeaders ex)
+    (.add "Content-Type" "application/x-git-upload-pack-result")
+    (.add "Cache-Control" "no-cache"))
+  (.sendResponseHeaders ex 200 0)
+  (with-open [in (request-body ex)
+              os (.getResponseBody ex)]
+    (doto (UploadPack. ^Repository (:repo ctx))
+      (.setBiDirectionalPipe false)
+      (.upload in os nil))))
+
+(defn- git-handler ^HttpHandler [ctx]
+  (reify HttpHandler
+    (handle [_ ex]
+      (try
+        (let [path   (.getPath (.getRequestURI ex))
+              method (.getRequestMethod ex)]
+          (cond
+            (and (= "GET" method) (str/ends-with? path "/info/refs"))
+            (advertise-refs! ctx ex)
+
+            (and (= "POST" method) (str/ends-with? path "/git-upload-pack"))
+            (upload-pack! ctx ex)
+
+            :else (status! ex 404)))
+        (catch Throwable _
+          (try (status! ex 500) (catch Throwable _)))
+        (finally (.close ex))))))
+
+(defn start-server!
+  "Serve the git smart-HTTP protocol for the store at `:dir` on 127.0.0.1
+  (localhost-only, like every slopp transport). Clone with
+  `git clone http://127.0.0.1:<port>/slopp.git`.
+  Returns {:server :ctx :port} for stop-server!."
+  [port {:keys [dir]}]
+  (when (str/blank? (str dir))
+    (throw (ex-info "the git server needs a durable store :dir" {})))
+  (let [ctx    (open-ctx! dir)
+        server (HttpServer/create (InetSocketAddress. "127.0.0.1" (int port)) 0)]
+    (.createContext server "/slopp.git" (git-handler ctx))
+    (.start server)
+    {:server server :ctx ctx :port port}))
+
+(defn stop-server! [{:keys [^HttpServer server ctx]}]
+  (.stop server 0)
+  (close-ctx! ctx)
+  nil)
+
+(defn -main [& [port dir]]
+  (let [port (Long/parseLong (or port "7457"))
+        dir  (or dir (System/getProperty "user.dir"))]
+    (start-server! port {:dir dir})
+    (println (str "slopp git server: http://127.0.0.1:" port
+                  "/slopp.git  (store: " dir ")"))
+    @(promise)))
