@@ -345,6 +345,33 @@
                                      ns-sym nm))
                  (sort (keys (:namespaces st)))))))
 
+(defn- label-ancestors [agent-label]
+  (when agent-label
+    (let [parts (clojure.string/split agent-label #"/")]
+      (map #(clojure.string/join "/" (take (inc %) parts))
+           (range (count parts))))))
+
+(defn- turn-intents
+  "delta-id → the enclosing turn's verbatim :intent (resolved through the
+  delta's agent, sub-agent path labels riding their root's turn). Derived
+  at query time; truncated for display."
+  [ds]
+  (loop [ds ds, open {}, out {}]
+    (if-let [d (first ds)]
+      (let [open (case (:op d)
+                   :turn-begin (assoc open (:agent d) (:intent d))
+                   :turn-end   (dissoc open (:agent d))
+                   open)
+            in   (some open (or (label-ancestors (:agent d)) []))
+            out  (if in
+                   (assoc out (:id d)
+                          (if (> (count in) 160)
+                            (str (subs in 0 157) "...")
+                            in))
+                   out)]
+        (recur (rest ds) open out))
+      out)))
+
 (defn query-lineage
   "Provenance chain for `nm`: the deltas that created or changed its form (who
   touched it, via which op, driven by which prompt)."
@@ -352,12 +379,14 @@
   (let [st (:store @session)
         id (:id (store/form-named st ns-sym nm))]
     (when id
-      (->> (store/deltas st)
-           (filter (fn [d]
-                     (or (= id (:form-id d))
-                         (some #{id} (:form-ids d)))))
-           ;; lean: bulk content lives in query-form-history, not here
-           (mapv #(dissoc % :sources :changeset :result))))))
+      (let [ti (turn-intents (store/deltas st))]
+        (->> (store/deltas st)
+             (filter (fn [d]
+                       (or (= id (:form-id d))
+                           (some #{id} (:form-ids d)))))
+             ;; lean: bulk content lives in query-form-history, not here
+             (mapv #(cond-> (dissoc % :sources :changeset :result)
+                      (ti (:id %)) (assoc :turn-intent (ti (:id %))))))))))
 
 (defn query-form-history
   "Every content version of `nm`'s form, oldest first, with the intent that
@@ -366,10 +395,13 @@
   (let [st (:store @session)
         id (:id (store/form-named st ns-sym nm))]
     (when id
-      (vec (for [d     (store/deltas st)
-                 :let  [src (get-in d [:sources id])]
-                 :when src]
-             {:delta (:id d) :op (:op d) :prompt (:prompt d) :source src})))))
+      (let [ti (turn-intents (store/deltas st))]
+        (vec (for [d     (store/deltas st)
+                   :let  [src (get-in d [:sources id])]
+                   :when src]
+               (cond-> {:delta (:id d) :op (:op d) :prompt (:prompt d)
+                        :source src}
+                 (ti (:id d)) (assoc :turn-intent (ti (:id d))))))))))
 
 (defn query-history
   "The delta log as a story, newest first. Filters: `:ns`, `:contains`

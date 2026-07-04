@@ -138,6 +138,13 @@
       (api/checkpoint! sess :label "rush support" :agent "alice")
       (let [r (api/turn-end! sess :agent "alice")]
         (is (nil? (:error r))))
+      (testing "lineage + form-history resolve the enclosing turn's ask"
+        (let [lin (api/query-lineage sess 'ep.core 'f)
+              fh  (api/query-form-history sess 'ep.core 'f)]
+          (is (= "add rush-order support to checkout"
+                 (:turn-intent (last lin))))
+          (is (= "add rush-order support to checkout"
+                 (:turn-intent (last fh))))))
       (testing "the collapsed history has a TURN bracket with the verbatim ask"
         (let [rows (api/query-history sess :collapse true)
               turn (first (keep :turn rows))]
