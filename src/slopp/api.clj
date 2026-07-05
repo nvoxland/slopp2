@@ -1016,7 +1016,9 @@
   [session code]
   (if-let [err (edit/observe-gate code)]
     {:error err}
-    (let [r (repl/eval-checked! (:image @session) code)]
+    ;; strip :reload in the owned image — no source files exist to reload, so it
+    ;; would only throw FileNotFoundException (store ns) or waste a jar re-read
+    (let [r (repl/eval-checked! (:image @session) (edit/strip-image-reload code))]
       (if (:err r)                                  ; F-3c2: never a silent []
         {:error (:err r)}
         (:values r)))))

@@ -10,6 +10,23 @@
 
 (defn- ingest [] (store/ingest (store/empty-store) 'demo src))
 
+(deftest strip-image-reload-removes-reload-only-inside-requires
+  (testing ":reload / :reload-all are stripped from require/use forms"
+    (is (not (re-find #":reload" (edit/strip-image-reload "(require 'foo :reload)"))))
+    (is (not (re-find #":reload" (edit/strip-image-reload "(require '[a :as b] :reload-all)"))))
+    (is (not (re-find #":reload" (edit/strip-image-reload "(use 'foo :reload)"))))
+    (testing "the require itself survives (still evaluable)"
+      (is (re-find #"require" (edit/strip-image-reload "(require 'foo :reload)")))
+      (is (re-find #"foo" (edit/strip-image-reload "(require 'foo :reload)")))))
+  (testing "nested inside a (do ...) is still reached"
+    (is (not (re-find #":reload"
+                      (edit/strip-image-reload "(do (require 'foo :reload) (foo/bar))")))))
+  (testing "a :reload keyword OUTSIDE a require is preserved (no over-stripping)"
+    (is (re-find #":reload" (edit/strip-image-reload "{:reload true}")))
+    (is (re-find #":reload" (edit/strip-image-reload "(assoc m :reload 1)"))))
+  (testing "code with nothing to strip is returned intact"
+    (is (= [1 2] (read-string (str "[" (edit/strip-image-reload "1 2") "]"))))))
+
 (deftest replace-form-happy-path
   (let [s (ingest)
         r (edit/replace-form s 'demo 'add "(defn add [x y] (* x y))"

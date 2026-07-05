@@ -106,7 +106,7 @@
                                :limit {:type "integer"}}
                   :required ["contains"]}}
    {:name "query_eval"
-    :description "Read-only eval against the live image (the oracle); never edits code."
+    :description "Read-only eval against the live image (the oracle); never edits code. Namespaces are already loaded in the image (no source files) — just call fns; a bare `require` is a no-op and `:reload`/`:reload-all` are ignored."
     :inputSchema {:type "object" :properties {:code {:type "string"}} :required ["code"]}}
    {:name "query_observe"
     :description "Run driver code while capturing the args and return value of calls to ns/name — 'what actually flows through this function?'"

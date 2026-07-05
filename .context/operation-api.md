@@ -101,7 +101,11 @@ is what catches a missing one.
 - `test-run!` — traced+diagnosed run; `ns-sym` nil = the WHOLE project in
   one image eval (instrumentation paid once — F-3c1); refreshes the trace
   map. `query-eval` surfaces evaluation errors as `{:error msg}` (F-3c2);
-  `query-references` scans every namespace (F-3c3).
+  `query-references` scans every namespace (F-3c3). `query-eval` strips
+  `:reload`/`:reload-all` from `require`/`use` forms (`edit/strip-image-reload`):
+  the image has no source files, so a store ns is loaded via `load-ns!` not the
+  classpath, and the muscle-memory `(require 'the.ns :reload)` would otherwise
+  throw FileNotFoundException instead of the intended no-op.
 - `checkpoint!` — unit-of-work boundary (user-designed): deterministically
   normalizes every form changed since the last checkpoint (`slopp.normalize`,
   conservative kibit-style rules, node-level so inner formatting survives),

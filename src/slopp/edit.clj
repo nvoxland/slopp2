@@ -85,6 +85,32 @@
     (catch Exception e
       (str "unparseable code: " (ex-message e)))))
 
+(defn strip-image-reload
+  "Remove `:reload`/`:reload-all` flags from every `require`/`use`/`require-macros`
+  form in `code`. The owned image has NO source files — store namespaces are
+  loaded via `load-ns!` (they aren't on the classpath) and deps are jars — so a
+  muscle-memory `(require 'the.ns :reload)` throws FileNotFoundException instead
+  of the intended no-op. Stripping makes it the no-op. Only flags that are
+  direct children of a require/use form are touched (a `:reload` elsewhere is
+  data and survives). Output is for eval, not storage, so leftover whitespace is
+  fine. Returns `code` unchanged if it doesn't parse."
+  [code]
+  (letfn [(reload-flag? [nd]
+            (and (n/sexpr-able? nd)
+                 (contains? #{:reload :reload-all} (n/sexpr nd))))
+          (strip [node]
+            (if (n/inner? node)
+              (let [kids (n/children node)
+                    head (some-> (first (filter n/sexpr-able? kids)) n/sexpr)
+                    kids (if (contains? '#{require use require-macros} head)
+                           (remove reload-flag? kids)
+                           kids)]
+                (n/replace-children node (mapv strip kids)))
+              node))]
+    (try
+      (n/string (strip (p/parse-string-all code)))
+      (catch Exception _ code))))
+
 (defn add-require-source
   "F5: structurally add one require clause (`require-str`, e.g.
   \"[clojure.string :as str]\") to an ns form's source. Returns {:src new-src}

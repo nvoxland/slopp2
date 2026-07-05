@@ -109,6 +109,22 @@
         (is (= [14] (api/query-eval sess "(x2.c9/call9 7)"))))
       (finally (api/close! sess)))))
 
+(deftest reload-of-a-store-namespace-is-a-no-op-not-a-file-error   ; self-host eval finding
+  ;; Store namespaces have no .clj on the classpath (loaded via load-ns!), so the
+  ;; muscle-memory `(require 'the.ns :reload)` threw FileNotFoundException. In the
+  ;; owned image there are no source files to reload, so query-eval strips
+  ;; :reload/:reload-all — the require becomes the intended no-op.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'rl.core "(ns rl.core)\n(defn f [x] (inc x))\n")
+      (testing "plain require of the loaded store ns works (baseline)"
+        (is (= [4] (api/query-eval sess "(do (require 'rl.core) (rl.core/f 3))"))))
+      (testing ":reload no longer errors — it's stripped in the image"
+        (is (= [4] (api/query-eval sess "(do (require 'rl.core :reload) (rl.core/f 3))"))))
+      (testing ":reload-all is stripped too"
+        (is (= [4] (api/query-eval sess "(do (require 'rl.core :reload-all) (rl.core/f 3))"))))
+      (finally (api/close! sess)))))
+
 (deftest remove-require-is-symmetric
   (let [sess (api/open!)]
     (try
