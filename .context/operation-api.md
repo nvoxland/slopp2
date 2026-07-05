@@ -129,7 +129,13 @@ is what catches a missing one.
   a generated launcher, a `:native` deps alias, and `build-native.sh`
   (user runs it; needs GraalVM 21+ on PATH). Generators live in
   `slopp.build`; X4 guards apply, plus: a deps.edn the build didn't
-  generate is never overwritten.
+  generate is never overwritten. **Native-compat gate (M6):** each manifest
+  dep's jars are scanned for `META-INF/native-image/**` (GraalVM reachability
+  metadata) → `:declared`/`:none` verdict (cached in `dep_surface.native`); a
+  metadata-less dep surfaces as `:native {:warnings … :metadata-missing […]}`
+  (may need a tracing-agent run), and a dep on the (currently empty)
+  `native-incompatible-deps` denylist REFUSES the native build unless
+  `:force true`.
 
 Every edit ends with `run-verification!` (affected-narrowed, diagnosed) and a
 `:verify` delta. Result shape: `{:delta :warnings :test :affected}` +

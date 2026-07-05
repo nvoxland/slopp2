@@ -6,7 +6,8 @@
   tell an external call from a store/stdlib one. Content-addressed: a surface
   is a pure function of `coord@version`, so it's computed once and cached
   (`db/dep_surface`)."
-  (:require [clojure.java.shell :as sh]
+  (:require [clojure.java.io :as io]
+            [clojure.java.shell :as sh]
             [clojure.set :as set]
             [clojure.string :as str]
             [clj-kondo.core :as kondo]
@@ -29,13 +30,21 @@
       (set (remove str/blank? (str/split (str/trim (:out r)) #":")))
       (throw (ex-info (str "classpath resolution failed: " (:err r)) {})))))
 
+(def ^:private jars-cache (atom {}))
+
 (defn dep-jars
   "The classpath entries contributed by `lib`@`coord` ALONE — its own jar plus
   any transitives, minus the clojure baseline (a classpath diff), so the
-  surface is exactly this dependency's contribution. Returns a vector of paths."
+  surface/native scan is exactly this dependency's contribution. Returns a
+  vector of paths; memoized per coord@version (the resolution shells out)."
   [lib coord]
-  (let [dir (neutral-dir)]
-    (vec (set/difference (spath {lib coord} dir) (spath {} dir)))))
+  (let [k (str lib "@" (or (:mvn/version coord) (:git/sha coord)
+                           (:local/root coord) (pr-str coord)))]
+    (or (@jars-cache k)
+        (let [dir (neutral-dir)
+              js  (vec (set/difference (spath {lib coord} dir) (spath {} dir)))]
+          (swap! jars-cache assoc k js)
+          js))))
 
 (defn surface
   "Analyze `jars` (from `dep-jars`) into an API surface:
@@ -84,3 +93,26 @@
         (let [s (surface (dep-jars lib coord))]
           (swap! surface-cache assoc k s)
           s))))
+
+(defn- jar-native-meta
+  "The `META-INF/native-image/**` entries in `jar-path` (GraalVM reachability
+  metadata: reflect-config.json / reachability-metadata.json / …), or nil."
+  [jar-path]
+  (when (str/ends-with? (str jar-path) ".jar")
+    (let [f (io/file jar-path)]
+      (when (.exists f)
+        (with-open [jf (java.util.jar.JarFile. f)]
+          (seq (for [e (enumeration-seq (.entries jf))
+                     :let [n (.getName e)]
+                     :when (str/starts-with? n "META-INF/native-image/")]
+                 n)))))))
+
+(defn native-verdict
+  "GraalVM native-image compatibility verdict for `jars` (from `dep-jars`):
+  `:declared` if any jar ships reachability metadata, else `:none`. Best-effort
+  — a dep can be native-compatible WITHOUT shipping metadata (if it needs no
+  reflection), so `:none` is a WARN signal, never a hard 'incompatible'."
+  [jars]
+  (let [declared (filter jar-native-meta jars)]
+    {:verdict (if (seq declared) :declared :none)
+     :metadata-jars (mapv #(.getName (io/file %)) declared)}))

@@ -435,8 +435,15 @@ the change here (same commit).
     `commit_point` include them (`:include-integration?`). A red integration
     test never blocks a fast edit — the point, for DB-backed deps behind a
     capability.
-  - Follow-on (planned M6→M7): a GraalVM native-compat gate.
-    `.context/dependencies.md` will hold the full model (M7).
+  - **M6 shipped:** the native-compat gate — `deps/native-verdict` scans a
+    dep's jars for `META-INF/native-image/**` (GraalVM reachability metadata)
+    → `:declared`/`:none` (cached in `dep_surface.native`); `build! :main`
+    warns on metadata-less deps (`:native {:warnings :metadata-missing}`) and
+    refuses a `native-incompatible-deps` denylist (empty for now) without
+    `:force`. Best-effort, declared-or-traced representation (GraalVM's own
+    pattern); a missing manifest is a WARN, not a hard incompatibility.
+  - Follow-on (M7): `.context/dependencies.md` holds the full model + the
+    capability-injection convention.
 
 ## H — host
 

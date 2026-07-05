@@ -173,6 +173,39 @@
         (is (pos? (:vars r))))
       (finally (api/close! sess)))))
 
+;; ---------------------------------------------------------------------------
+;; M6: native-compat gate (GraalVM reachability metadata)
+
+(deftest native-verdict-detects-metadata
+  (testing "a dep without reachability metadata → :none (warn, not incompatible)"
+    (is (= :none (:verdict (deps/native-verdict
+                            (deps/dep-jars 'org.clojure/data.json
+                                           {:mvn/version "2.5.0"}))))))
+  (testing "a jar shipping META-INF/native-image → :declared"
+    (let [jar (str (temp-dir) "/withmeta.jar")]
+      (with-open [jos (java.util.jar.JarOutputStream.
+                       (clojure.java.io/output-stream jar))]
+        (.putNextEntry jos (java.util.jar.JarEntry.
+                            "META-INF/native-image/foo/reflect-config.json"))
+        (.write jos (.getBytes "[]"))
+        (.closeEntry jos))
+      (is (= :declared (:verdict (deps/native-verdict [jar])))))))
+
+(deftest build-native-warns-on-missing-metadata
+  (let [dir  (temp-dir)
+        sess (api/open! {:dir dir})]
+    (try
+      (api/ingest! sess 'app.core "(ns app.core)\n\n(defn run [& args] (apply println args))\n")
+      (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"} :agent "a")
+      (let [out (str (temp-dir) "/built")
+            r   (api/build! sess out :main 'app.core/run)]
+        (is (nil? (:error r)) (pr-str r))
+        (testing "the metadata-less dep surfaces as a native warning"
+          (is (re-find #"data\.json" (str (get-in r [:native :warnings]))))
+          (is (some #{'org.clojure/data.json}
+                    (get-in r [:native :metadata-missing])))))
+      (finally (api/close! sess)))))
+
 (deftest deps-ride-the-mcp-surface
   (let [sess (api/open!)]
     (try
