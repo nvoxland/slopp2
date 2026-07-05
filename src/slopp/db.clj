@@ -45,6 +45,12 @@
                               name    TEXT,
                               source  TEXT NOT NULL,
                               PRIMARY KEY (ns, pos))"])
+      ;; content-addressed dependency analysis (P4-deps M4/M6), keyed by
+      ;; "lib@version" — a surface/native verdict is a pure fn of the coord
+      (jdbc/execute! conn ["CREATE TABLE IF NOT EXISTS dep_surface (
+                              id      TEXT PRIMARY KEY,
+                              surface TEXT,
+                              native  TEXT)"])
       conn)))
 
 (defn persist!
@@ -166,6 +172,33 @@
   (or (some-> (jdbc/execute-one! conn ["SELECT v FROM meta WHERE k = 'deps'"])
               :meta/v edn/read-string)
       {}))
+
+(defn get-dep-surface
+  "The cached analysis surface for a dependency `id` (\"lib@version\"), or nil."
+  [conn id]
+  (some-> (jdbc/execute-one! conn ["SELECT surface FROM dep_surface WHERE id = ?" id])
+          :dep_surface/surface edn/read-string))
+
+(defn put-dep-surface!
+  "Cache `surface` (an EDN-able map) for dependency `id`. Content-addressed by
+  coord@version — computed once, reused forever."
+  [conn id surface]
+  (jdbc/execute! conn ["INSERT INTO dep_surface (id, surface) VALUES (?,?)
+                        ON CONFLICT(id) DO UPDATE SET surface = excluded.surface"
+                       id (pr-str surface)]))
+
+(defn get-dep-native
+  "The cached native-image verdict for a dependency `id`, or nil (P4-deps M6)."
+  [conn id]
+  (some-> (jdbc/execute-one! conn ["SELECT native FROM dep_surface WHERE id = ?" id])
+          :dep_surface/native edn/read-string))
+
+(defn put-dep-native!
+  "Cache the native-compat `verdict` (EDN map) for dependency `id`."
+  [conn id verdict]
+  (jdbc/execute! conn ["INSERT INTO dep_surface (id, native) VALUES (?,?)
+                        ON CONFLICT(id) DO UPDATE SET native = excluded.native"
+                       id (pr-str verdict)]))
 
 (defn rendered-sources
   "{ns-sym rendered-source} straight from the element rows — the `source`

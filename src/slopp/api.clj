@@ -23,6 +23,7 @@
             [slopp.refactor :as refactor]
             [slopp.normalize :as normalize]
             [slopp.build :as build]
+            [slopp.deps :as deps]
             [slopp.db :as db]))
 
 (declare run-verification! forms-changed-since query-outline
@@ -1800,6 +1801,21 @@
 ;; ---------------------------------------------------------------------------
 ;; External dependencies (Tier 1) — the per-store manifest
 
+(defn- analyze-dep!
+  "Compute (or reuse the cached) API surface for `lib`@`coord` (M4) —
+  best-effort: surface analysis must never fail a deps-add. Persists to the
+  durable `dep_surface` cache when the session has a db; the process-level
+  memo in `slopp.deps` covers ephemeral sessions. Returns the surface or nil."
+  [session lib coord]
+  (try
+    (let [conn (:db @session)
+          id   (deps/coord-key lib coord)]
+      (or (some-> conn (db/get-dep-surface id))
+          (let [s (deps/surface-of lib coord)]
+            (when conn (db/put-dep-surface! conn id s))
+            s)))
+    (catch Throwable _ nil)))
+
 (defn deps-add!
   "Declare external dependency `lib` (a symbol like `org.clojure/data.json`)
   at `coord` (a deps.edn coordinate map, e.g. `{:mvn/version \"2.5.0\"}`).
@@ -1818,10 +1834,14 @@
                         #(first (store/record-deps-add % lib coord
                                                        :agent agent :prompt prompt))
                         [])
-      (if-let [hot (repl/add-libs! (:image @session) {lib coord})]
-        (do (fresh-image! session)              ; hot add failed → faithful restart
-            {:added lib :coord coord :restarted true :note (:err hot)})
-        {:added lib :coord coord :hot true}))))
+      (let [surf (analyze-dep! session lib coord)                 ; M4: API surface
+            base (cond-> {:added lib :coord coord}
+                   surf (assoc :namespaces (vec (:namespaces surf))
+                               :vars (count (:vars surf))))]
+        (if-let [hot (repl/add-libs! (:image @session) {lib coord})]
+          (do (fresh-image! session)            ; hot add failed → faithful restart
+              (assoc base :restarted true :note (:err hot)))
+          (assoc base :hot true))))))
 
 (defn deps-remove!
   "Drop external dependency `lib` from the manifest. A jar can't be unloaded,

@@ -2,9 +2,11 @@
   "External dependency support (trust-tiered). M1: the per-store manifest —
   :deps-add/:deps-remove tracked deltas, materialized to a meta row, reaching
   the owned image's classpath and the generated deps.edn."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
             [slopp.build :as build]
+            [slopp.deps :as deps]
             [slopp.mcp]
             [slopp.store :as store]
             [slopp.db :as db])
@@ -136,6 +138,40 @@
       (is (re-find #":deps" s))
       (is (re-find #"org\.clojure/data\.json" s))
       (is (re-find #"2\.5\.0" s)))))
+
+;; ---------------------------------------------------------------------------
+;; M4: dependency surface analysis (clj-kondo over the dep's own jars)
+
+(deftest dep-surface-analysis
+  (testing "a dep's own jars are isolated (classpath diff) and analyzed"
+    (let [jars (deps/dep-jars 'org.clojure/data.json {:mvn/version "2.5.0"})]
+      (is (some #(str/includes? % "data.json") jars))
+      (let [s (deps/surface jars)]
+        (is (contains? (:namespaces s) 'clojure.data.json))
+        (testing "public vars carry arities + docstring"
+          (let [wr (get-in s [:vars 'clojure.data.json/write-str])]
+            (is (some? wr))
+            (is (= 1 (:varargs-min wr)))
+            (is (string? (:doc wr)))))))))
+
+(deftest dep-surface-db-round-trip
+  (let [dir (temp-dir) conn (db/open! dir)]
+    (try
+      (is (nil? (db/get-dep-surface conn "a/b@1.0")))
+      (db/put-dep-surface! conn "a/b@1.0"
+                           {:namespaces #{'x.y} :vars {'x.y/f {:arities [1]}}})
+      (let [s (db/get-dep-surface conn "a/b@1.0")]
+        (is (= #{'x.y} (:namespaces s)))
+        (is (= [1] (get-in s [:vars 'x.y/f :arities]))))
+      (finally (.close conn)))))
+
+(deftest deps-add-returns-surface
+  (let [sess (api/open!)]
+    (try
+      (let [r (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"})]
+        (is (some #{'clojure.data.json} (:namespaces r)))
+        (is (pos? (:vars r))))
+      (finally (api/close! sess)))))
 
 (deftest deps-ride-the-mcp-surface
   (let [sess (api/open!)]

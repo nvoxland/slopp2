@@ -117,8 +117,12 @@ is what catches a missing one.
   (`image-with-deps!` reconciles the bare warm-spare via add-libs) and the
   generated `deps.edn` (`build/deps-edn` now takes the manifest; empty is
   byte-identical to before so the `ours?` guard holds; `*print-namespace-maps*`
-  is bound OFF for determinism). MCP: `deps_add {lib version|coord}`,
-  `deps_remove`, `deps_list`.
+  is bound OFF for determinism). On add, `slopp.deps` analyzes the dep's own
+  jars (classpath diff → clj-kondo) into an API SURFACE (provided namespaces +
+  per-var arities/docs/macro flags), memoized per `coord@version` (process
+  memo + durable `dep_surface` table); `deps-add!` returns `:namespaces` +
+  `:vars` count. MCP: `deps_add {lib version|coord}`, `deps_remove`,
+  `deps_list`.
 - `restart!` — agent-callable fresh image (D5 escape hatch).
 - `build!` — materialize `.clj` files (the C1/C6 explicit build). With
   `:main` (qualified entry fn) it also emits the O4 native-binary recipe:
