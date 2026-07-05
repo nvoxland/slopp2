@@ -17,6 +17,20 @@ CST (which can represent anything).
 Note: the D3 bans apply to *authored* store code. The host and `slopp.rt`
 legitimately use `alter-var-root`/`binding` as instrumentation machinery.
 
+## The `^:unsafe` escape hatch (P4-deps M2)
+
+A top-level form tagged `^:unsafe` (or `^{:unsafe true}`) **bypasses D3+D4** —
+the Rust-`unsafe` move: the author asserts an obligation the analyzer can't
+discharge (boundary work: calling into an opaque Tier-1 dependency, or the
+handful of host forms that genuinely need `binding`/`alter-var-root`/
+`read-string`). It is a **coarse, greppable** opt-out (blanket, not per-ban),
+surfaced at read time as `:unsafe? true` on `query_symbol`. It relaxes ONLY
+the dialect ban — the `!`-effect warning is orthogonal honest-labeling and
+still fires. Implementation load-bearing point: `store/form-symbol` unwraps
+`:meta`, so an `^:unsafe (defn f …)` stays NAMED and addressable (else it'd be
+an anonymous `:meta` node). The marker round-trips render + checkpoint
+normalize intact.
+
 ## `!`-effect checking (D6, `slopp.index`)
 
 - A var is **effectful iff it transitively reaches an effectful leaf** through

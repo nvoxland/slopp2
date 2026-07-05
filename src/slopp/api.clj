@@ -345,10 +345,11 @@
         f   (store/form-named st ns-sym nm)
         eff (index/effectful-vars (index/analyze (render/render-ns st ns-sym)))]
     (when f
-      {:id         (:id f)
-       :name       (:name f)
-       :effectful? (contains? eff (symbol (str ns-sym) (str nm)))
-       :source     (n/string (:node f))})))
+      (cond-> {:id         (:id f)
+               :name       (:name f)
+               :effectful? (contains? eff (symbol (str ns-sym) (str nm)))
+               :source     (n/string (:node f))}
+        (edit/unsafe? (:node f)) (assoc :unsafe? true)))))
 
 (defn query-references
   "Usages of `ns-sym/nm` across EVERY namespace (F-3c3 — same-ns-only results

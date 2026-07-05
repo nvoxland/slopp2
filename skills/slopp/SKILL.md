@@ -104,6 +104,14 @@ rejected on the spot (`{:error "...failed to compile: Unable to resolve..."}`)
 — nothing commits. So **define callees before callers**; for mutual recursion
 add `(declare name)` first, exactly as in ordinary Clojure.
 
+**Using an external library?** `deps_add` it first (it hot-loads into the
+image, no restart), then `(:require ...)` it like normal. The library's own
+code is opaque to slopp's analysis, so a form that CALLS it is treated as
+effectful by default (name it `!` or mark the dep var pure). **`^:unsafe`**
+on a top-level form opts it out of the dialect ban (macros, `binding`,
+`eval`, …) — the last resort for boundary code the analyzer can't vet; it's
+greppable and shows as `:unsafe? true`, and does NOT silence `!`-warnings.
+
 **Red-first TDD, slopp-style:** add the function with a deliberately minimal
 body AND its test in ONE `edit_group` — that group's verification returns the
 honest red with `:failures` inline; then `edit_replace_form` the real

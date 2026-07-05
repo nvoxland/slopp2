@@ -412,6 +412,15 @@ the change here (same commit).
     `ours?` guard holds; `*print-namespace-maps*` bound OFF for determinism);
     tools `deps_add`/`deps_remove`/`deps_list`. Verified live: add-libs
     hot-loads a dep into the owned nREPL image with no restart.
+  - **M2 shipped:** the `^:unsafe` per-form hatch (see `dialect.md`) —
+    `store/form-symbol` unwraps `:meta` (load-bearing — else marked forms are
+    anonymous); `dialect-check` early-returns on `unsafe?`; `query_symbol`
+    surfaces `:unsafe?`; relaxes ONLY the dialect ban, not effect labeling;
+    survives render + checkpoint normalize. **Self-host proven** (M1+M2): a
+    store with rewrite-clj added ingests real `slopp.store` + `slopp.render`
+    source and runs `render/ns-path` in the self-hosted image; an `^:unsafe`
+    def holding the banned symbols (slopp.edit `banned-syms` shape) ingests
+    cleanly.
   - Follow-ons (planned M4→M7): clj-kondo dep surface analysis (memoized per
     `coord@version`), the effect boundary, an `^:integration` test tier the
     fast oracle skips, and a GraalVM native-compat gate. `.context/dependencies.md`

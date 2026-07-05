@@ -34,13 +34,19 @@
      defprotocol defonce deftest ns})
 
 (defn form-symbol
-  "The symbol a top-level form defines, or nil (anonymous/effectful top-levels)."
+  "The symbol a top-level form defines, or nil (anonymous/effectful top-levels).
+  Sees through leading metadata (`^:unsafe`, `^{:integration true}`, …) so a
+  marked form stays NAMED and addressable — without this, a `^:unsafe (defn …)`
+  is a `:meta` node and would be anonymous."
   [node]
-  (when (and (n/sexpr-able? node) (= :list (n/tag node)))
-    (let [s (n/sexpr node)]
-      (when (and (seq s) (symbol? (first s)) (contains? def-heads (first s)))
-        (let [nm (second s)]
-          (when (symbol? nm) nm))))))
+  (when (n/sexpr-able? node)
+    (if (= :meta (n/tag node))
+      (some-> (last (filter n/sexpr-able? (n/children node))) form-symbol)
+      (when (= :list (n/tag node))
+        (let [s (n/sexpr node)]
+          (when (and (seq s) (symbol? (first s)) (contains? def-heads (first s)))
+            (let [nm (second s)]
+              (when (symbol? nm) nm))))))))
 
 (defn name-of-source
   "The symbol a top-level form SOURCE string defines, or nil — the parse-back

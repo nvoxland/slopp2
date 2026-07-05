@@ -22,18 +22,29 @@
 (defn- all-symbols [node]
   (filter symbol? (tree-seq coll? seq (n/sexpr node))))
 
-(defn- dialect-check
-  "nil if the form is admissible; an error string otherwise (D3/D4)."
+(defn unsafe?
+  "Does the top-level form carry `^:unsafe` metadata? The greppable,
+  human-discharged opt-out of the dialect ban (the Rust-`unsafe` proof
+  obligation — Tier-1 boundary work, e.g. calling into an opaque dep)."
   [node]
-  (let [s    (n/sexpr node)
-        head (when (seq? s) (first s))]
-    (cond
-      (contains? banned-heads head)
-      (str "dialect (D4): user macros are banned — " head)
-      (some banned-syms (all-symbols node))
-      (str "dialect (D3): denylisted symbol used — "
-           (first (filter banned-syms (all-symbols node))))
-      :else nil)))
+  (boolean (:unsafe (meta (n/sexpr node)))))
+
+(defn- dialect-check
+  "nil if the form is admissible; an error string otherwise (D3/D4). An
+  `^:unsafe` form is admissible by assertion — the author takes on the
+  obligation the analyzer can't discharge (it stays greppable via `unsafe?`)."
+  [node]
+  (if (unsafe? node)
+    nil
+    (let [s    (n/sexpr node)
+          head (when (seq? s) (first s))]
+      (cond
+        (contains? banned-heads head)
+        (str "dialect (D4): user macros are banned — " head)
+        (some banned-syms (all-symbols node))
+        (str "dialect (D3): denylisted symbol used — "
+             (first (filter banned-syms (all-symbols node))))
+        :else nil))))
 
 (defn parse-form
   "Parse `source` as exactly ONE dialect-legal top-level form (the D3/D4 gate
