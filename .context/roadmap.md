@@ -4,7 +4,9 @@
 portability) · #2 ✅ (outline/namespaces) · #3 ✅ (query_observe +
 query_macroexpand) · #4 partially ✅ (extract shipped alongside rename/move;
 inline/change-signature + the published CODESTRUCT-style eval remain) ·
-#5, #6 open — the semantic×history depth is the next differentiator to build.
+#5 ✅ (semantic×history depth SHIPPED 2026-07-04: form-at-delta,
+was-green-at, delta-log search, form-history diffs) · #6 open (Phase-4;
+much shipped — see decisions.md m3–m8).
 The symmetric-eval harness (benchmarks/results.md) is the standing measure;
 next eval round should be a LARGER modify-and-extend task, slopp's favorable
 terrain.
@@ -42,11 +44,19 @@ diff (the DESIGN.md §7 oracle). Also the CODESTRUCT-style eval: rename/edit
 correctness + token cost vs. a string-replace/grep baseline, once the op set
 is broad enough to be worth publishing numbers for.
 
-## 5. Semantic × history depth (the novel core)
-Today's lineage is per-form and linear. Add: form-at-delta (time travel),
-delta-log search ("which prompts touched auth?"), form history diffs,
-was-green-at queries, `query_history` (the DAG with prompts). This is the
-"semantic×history combination nobody has shipped" (DESIGN.md §5) — the moat.
+## 5. Semantic × history depth (the novel core) — ✅ SHIPPED 2026-07-04
+The moat, built (P4-m8-adjacent, `slopp.history-test`): **form-at-delta**
+(`query_form_at` — a form's source exactly as it stood at any delta or
+commit-point, names resolved as of then), **was-green-at**
+(`query_status_at` + per-version `:status` on `query_form_history` via
+`status-after`), **delta-log search** (`query_search_history` — "which
+prompts touched auth?", prompt/intent/label/description, form-addressed
+hits), and **form-history diffs** (`query_form_history {:format "text"}` —
+one form's life as a per-version LINE-diff story). All read-only over the
+journal slopp already records — the "semantic×history combination nobody has
+shipped" (DESIGN.md §5). Remaining wisps (lower priority): whole-namespace
+render-at-delta (lossy; forms are exact), and cost/token accounting per
+delta (`ideas/todo.md`).
 
 ## 6. Phase-4: multi-agent / branch / merge
 The deferred CRDT half (C4/C5): concurrent sessions as peers, branch/merge

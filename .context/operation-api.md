@@ -61,7 +61,16 @@ verified history:
   — drill in with `query-form-at`/`query-lineage`. Distinct from
   `query-history :contains` (that's episode/turn rows; this is log-wide,
   form-addressed, intent-aware).
-- (HM4) per-form diff timelines — land next.
+- `query-form-history {:format "text"}` — one form's LIFE as a per-version
+  LINE-diff story (`render-form-history-text`): each version's header (delta,
+  op, the prompt/intent, its green/red, when) + the diff FROM the previous
+  version (reuses `diff-lines`). EDN rows also now carry `:at`. The
+  agent-facing default stays EDN.
+
+Ordering note: `query-search-history` sits above `human-time`'s `defn-`, and
+`query-form-history` above `render-form-history-text`/`status-after` — all in
+the top-of-file `declare`. A fresh-JVM `clojure -M:test` (not the warm REPL)
+is what catches a missing one.
 
 ## Write surface (each = tracked delta(s) + hot-reload + verification + provenance)
 

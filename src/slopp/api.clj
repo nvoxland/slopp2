@@ -29,7 +29,7 @@
          hot-load-all! fresh-image! reap-idle-images!
          content-ops delta-fids episode-boundary episode-span
          query-changes edit-group! fix-declares! status-at status-after
-         human-time)
+         human-time render-form-history-text)
 
 (defn- start-spare!
   "Kick off a background-warming spare image (D5 warm spare) if enabled."
@@ -391,21 +391,27 @@
 
 (defn query-form-history
   "Every content version of `nm`'s form, oldest first, with the intent that
-  produced it and the verification state it landed in:
-  [{:delta :op :prompt :source :status :turn-intent}]. `:status`
+  produced it, when, and the verification state it landed in:
+  [{:delta :op :prompt :source :status :at :turn-intent}]. `:status`
   (was-green-at, HM2) is the project's verification state governing each
-  version — semantic × history, per form."
-  [session ns-sym nm]
+  version — semantic × history, per form. `:format \"text\"` (HM4) renders
+  the form's LIFE as a per-version LINE-diff story instead."
+  [session ns-sym nm & {:keys [format]}]
   (let [st (:store @session)
         id (:id (store/form-named st ns-sym nm))]
     (when id
-      (let [ti (turn-intents (store/deltas st))]
-        (vec (for [d     (store/deltas st)
-                   :let  [src (get-in d [:sources id])]
-                   :when src]
-               (cond-> {:delta (:id d) :op (:op d) :prompt (:prompt d)
-                        :source src :status (status-after st (:id d))}
-                 (ti (:id d)) (assoc :turn-intent (ti (:id d))))))))))
+      (let [ti       (turn-intents (store/deltas st))
+            versions (vec (for [d     (store/deltas st)
+                                :let  [src (get-in d [:sources id])]
+                                :when src]
+                            (cond-> {:delta (:id d) :op (:op d)
+                                     :prompt (:prompt d) :source src
+                                     :status (status-after st (:id d))
+                                     :at (human-time (:at d))}
+                              (ti (:id d)) (assoc :turn-intent (ti (:id d))))))]
+        (if (= "text" (some-> format name))
+          (render-form-history-text (symbol (str ns-sym) (str nm)) versions)
+          versions)))))
 
 (defn query-search-history
   "Delta-log search — the 'which prompts touched X' query. Case-insensitive
@@ -840,6 +846,30 @@
                                     "green"
                                     (str "red(" (:fail %) ")"))
                                  (:verification-arc c))))]))))
+
+(defn- render-form-history-text
+  "One form's LIFE as a story (HM4): each version's header (delta, op, the
+  prompt/intent that produced it, its green/red, when) followed by the LINE
+  diff FROM the previous version (the first version shows as all-added).
+  Reuses `diff-lines` — unchanged lines are context, not churn."
+  [qsym versions]
+  (str/join
+   "\n"
+   (into [(str "form " qsym " — " (count versions) " version"
+               (when (not= 1 (count versions)) "s"))]
+         (mapcat
+          (fn [prev v]
+            (cons (str "  " (:delta v) " " (name (:op v))
+                       (when-let [why (or (:prompt v) (:turn-intent v))]
+                         (str " — " why))
+                       "  [" (name (:status v)) "]"
+                       (when (:at v) (str "  @ " (:at v))))
+                  (map (fn [[tag line]]
+                         (str "    " (case tag :same "  " :del "- " :add "+ ")
+                              line))
+                       (diff-lines (:source prev) (:source v)))))
+          (cons nil versions)
+          versions))))
 
 (defn query-changes
   "The agent's EPISODE — everything since `:agent`'s last checkpoint: net

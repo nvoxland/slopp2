@@ -45,6 +45,12 @@ Server: `clojure -M -m slopp.mcp` (stdio) from the slopp repo.
    When the USER asks what happened, pass `format: "text"` to
    `query_history`/`query_changes` — timestamps, story lines, and line
    diffs, ready to relay verbatim instead of narrating EDN.
+   **Ask the history deep questions, don't re-derive them:**
+   `query_form_at {ns name at}` = a form exactly as it stood at a past
+   delta/milestone (TIME-TRAVEL); `query_status_at {at}` = was-it-green
+   there; `query_search_history {contains}` = which prompts/intents touched
+   a thing (→ the forms); `query_form_history {ns name format:"text"}` = one
+   form's whole life as a diff story. These read the journal git can't see.
 5. **Checkpoint at unit boundaries.** When a piece of work is done, call
    `checkpoint {label, agent}` — it tidies the forms you touched
    (deterministic, behavior-preserving rewrites), cleans up satisfied

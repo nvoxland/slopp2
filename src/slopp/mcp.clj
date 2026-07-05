@@ -87,9 +87,10 @@
                                :collapse {:type "boolean"}
                                :format {:type "string" :enum ["edn" "text"]}}}}
    {:name "query_form_history"
-    :description "Every content version of a form, oldest first, with the prompt that produced it."
+    :description "Every content version of a form, oldest first, with the prompt that produced it, when, and the verification state it landed in (:status). format=\"text\" renders the form's LIFE as a per-version line-diff story."
     :inputSchema {:type "object"
-                  :properties {:ns {:type "string"} :name {:type "string"}}
+                  :properties {:ns {:type "string"} :name {:type "string"}
+                               :format {:type "string" :enum ["text"]}}
                   :required ["ns" "name"]}}
    {:name "query_form_at"
     :description "TIME-TRAVEL: a form's source exactly as it stood at a past point. :at is a delta id OR a commit-point id (resolves to that milestone's state). Names resolve as of that delta (a later-renamed form still answers to its old name). Returns {:source :status (was-green-at) :at} or {:error}."
@@ -461,7 +462,8 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                    :collapse (:collapse a)
                                                    :format (:format a)
                                                    :limit (or (:limit a) 20)))
-      "query_form_history" (text (api/query-form-history session (sym :ns) (sym :name)))
+      "query_form_history" (text (api/query-form-history session (sym :ns) (sym :name)
+                                                         :format (:format a)))
       "query_form_at"     (text (api/query-form-at session (sym :ns) (sym :name)
                                                    :at (:at a)))
       "query_status_at"   (text (api/query-status-at session :at (:at a)))

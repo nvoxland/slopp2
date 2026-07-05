@@ -208,3 +208,34 @@
                       [:result :content 0 :text])]
         (is (str/includes? r "harden auth path")))
       (finally (api/close! sess)))))
+
+;; ---------------------------------------------------------------------------
+;; HM4: form-history diffs — one form's life as a diff story
+
+(deftest form-history-renders-as-a-diff-timeline
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'hi.core seed)
+      (api/edit-replace! sess 'hi.core 'f "(defn f [x] (+ x 2))"
+                         :prompt "bump to two" :agent "a")
+      (api/edit-replace! sess 'hi.core 'f "(defn f [x] (- x 9))"
+                         :prompt "now subtract" :agent "a")
+      (testing "EDN rows now also carry a human :at"
+        (is (every? :at (api/query-form-history sess 'hi.core 'f))))
+      (testing "text format is a per-version LINE-diff story with intents"
+        (let [txt (api/query-form-history sess 'hi.core 'f :format "text")]
+          (is (str/includes? txt "form hi.core/f"))
+          (is (str/includes? txt "bump to two"))
+          (is (str/includes? txt "now subtract"))
+          ;; the churn between versions shows as - / + lines
+          (is (str/includes? txt "- (defn f [x] (+ x 2))"))
+          (is (str/includes? txt "+ (defn f [x] (- x 9))"))))
+      (testing "the same story rides the MCP surface via :format"
+        (let [r (get-in (slopp.mcp/handle
+                         sess {:id 1 :method "tools/call"
+                               :params {:name "query_form_history"
+                                        :arguments {:ns "hi.core" :name "f"
+                                                    :format "text"}}})
+                        [:result :content 0 :text])]
+          (is (str/includes? r "bump to two"))))
+      (finally (api/close! sess)))))
