@@ -15,7 +15,10 @@
             [rewrite-clj.node :as n]))
 
 (defn empty-store []
-  {:namespaces {} :deltas [] :next-id 0 :deps {}})
+  ;; :dep-ns   lib → #{namespaces the dep provides} (M4 surface, for M3's
+  ;;           external-call effect boundary)
+  ;; :dep-pure #{qualified syms} the user has asserted pure (narrows M3)
+  {:namespaces {} :deltas [] :next-id 0 :deps {} :dep-ns {} :dep-pure #{}})
 
 (defn- now-ms [] (System/currentTimeMillis))
 
@@ -341,14 +344,17 @@
   it into the store's `:deps` manifest. A tracked delta (not a pure marker):
   it rides history / branches / merge / foreign-sync like every write.
   Returns [store' delta]."
-  [store lib coord & {:keys [agent prompt]}]
+  [store lib coord & {:keys [agent prompt namespaces]}]
   (let [[did store'] (gen-id store "d")
         delta (cond-> {:id did :parent (:id (last (:deltas store)))
                        :op :deps-add :ns '*session* :at (now-ms)
                        :lib lib :coord coord}
+                (seq namespaces) (assoc :namespaces (vec namespaces))
                 agent  (assoc :agent agent)
                 prompt (assoc :prompt prompt))]
-    [(-> store' (update :deltas conj delta) (assoc-in [:deps lib] coord))
+    [(-> store' (update :deltas conj delta)
+         (assoc-in [:deps lib] coord)
+         (assoc-in [:dep-ns lib] (set namespaces)))
      delta]))
 
 (defn record-deps-remove
@@ -361,7 +367,25 @@
                        :lib lib}
                 agent  (assoc :agent agent)
                 prompt (assoc :prompt prompt))]
-    [(-> store' (update :deltas conj delta) (update :deps dissoc lib))
+    [(-> store' (update :deltas conj delta)
+         (update :deps dissoc lib)
+         (update :dep-ns dissoc lib))
+     delta]))
+
+(defn record-deps-pure
+  "Append a `:deps-pure` delta marking qualified `sym` pure (`pure?` true) or
+  un-pure (false) — the narrowing of M3's effectful-by-default boundary (the
+  author asserts this dep var has no effect slopp should track).
+  Returns [store' delta]."
+  [store sym pure? & {:keys [agent prompt]}]
+  (let [[did store'] (gen-id store "d")
+        delta (cond-> {:id did :parent (:id (last (:deltas store)))
+                       :op :deps-pure :ns '*session* :at (now-ms)
+                       :sym sym :pure (boolean pure?)}
+                agent  (assoc :agent agent)
+                prompt (assoc :prompt prompt))]
+    [(update (update store' :deltas conj delta)
+             :dep-pure (fnil (if pure? conj disj) #{}) sym)
      delta]))
 
 (defn record-turn
@@ -400,9 +424,15 @@
       (:verify :checkpoint :merge :turn-begin :turn-end :commit)
       (with-d store)
 
-      ;; manifest deltas carry state — reconstruct :deps on foreign sync
-      :deps-add    (with-d (assoc-in store [:deps (:lib d)] (:coord d)))
-      :deps-remove (with-d (update store :deps dissoc (:lib d)))
+      ;; manifest deltas carry state — reconstruct :deps/:dep-ns/:dep-pure
+      :deps-add    (with-d (-> store
+                               (assoc-in [:deps (:lib d)] (:coord d))
+                               (assoc-in [:dep-ns (:lib d)] (set (:namespaces d)))))
+      :deps-remove (with-d (-> store
+                               (update :deps dissoc (:lib d))
+                               (update :dep-ns dissoc (:lib d))))
+      :deps-pure   (with-d (update store :dep-pure
+                                   (fnil (if (:pure d) conj disj) #{}) (:sym d)))
 
       (:replace :rename :normalize)
       (with-d
@@ -601,12 +631,20 @@
                             (conj notes {:conflict :deps :lib lib
                                          :reason "same dependency pinned to different coords"})
                             changed new-nses (conj applied (:id d)))
-                      (done (assoc-in st [:deps lib] (:coord d))
+                      (done (-> st (assoc-in [:deps lib] (:coord d))
+                                (assoc-in [:dep-ns lib] (set (:namespaces d))))
                             idmap (inc merged) conflicts notes changed new-nses
                             (conj applied (:id d)))))
 
                   :deps-remove
-                  (done (update st :deps dissoc (:lib d))
+                  (done (-> st (update :deps dissoc (:lib d))
+                            (update :dep-ns dissoc (:lib d)))
+                        idmap (inc merged) conflicts notes changed new-nses
+                        (conj applied (:id d)))
+
+                  :deps-pure
+                  (done (update st :dep-pure
+                                (fnil (if (:pure d) conj disj) #{}) (:sym d))
                         idmap (inc merged) conflicts notes changed new-nses
                         (conj applied (:id d)))
 

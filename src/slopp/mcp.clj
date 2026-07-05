@@ -241,6 +241,13 @@
    {:name "deps_list"
     :description "This store's external dependency manifest: {lib coord}."
     :inputSchema {:type "object" :properties {}}}
+   {:name "deps_pure"
+    :description "Assert a dependency var is PURE (no effect slopp should track), narrowing the effectful-by-default boundary so callers aren't flagged. var is fully-qualified, e.g. \"clojure.data.json/write-str\". Pass pure=false to undo."
+    :inputSchema {:type "object"
+                  :properties {:var {:type "string"}
+                               :pure {:type "boolean"}
+                               :agent {:type "string"}}
+                  :required ["var"]}}
    {:name "test_run"
     :description "Run tests in the live image and record the result. No :ns = EVERY namespace's tests in one call (the full-project sweep). :only restricts to named tests; :fresh true restarts first for a guaranteed-faithful run."
     :inputSchema {:type "object"
@@ -323,7 +330,7 @@
   (into single-write-tools
         ["edit_delete_form" "edit_group" "edit_rename" "edit_extract"
          "edit_move" "ns_add_require" "ns_remove_require" "ingest" "ns_create"
-         "checkpoint" "commit_point" "deps_add" "deps_remove"]))
+         "checkpoint" "commit_point" "deps_add" "deps_remove" "deps_pure"]))
 
 (defn- track-hint!
   "Session-scoped usage counters → an optional one-line hint (item 3: haiku's
@@ -582,6 +589,9 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
       "deps_remove"        (text (api/deps-remove! session (sym :lib)
                                                    :agent (:agent a)))
       "deps_list"          (text (api/deps-list session))
+      "deps_pure"          (text (if (false? (:pure a))
+                                   (api/deps-unpure! session (sym :var) :agent (:agent a))
+                                   (api/deps-pure! session (sym :var) :agent (:agent a))))
       "query_git"          (text (if-let [u (:git-url @session)]
                                    {:url u
                                     :remote (str "git remote add slopp " u)

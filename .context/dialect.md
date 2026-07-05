@@ -31,6 +31,21 @@ still fires. Implementation load-bearing point: `store/form-symbol` unwraps
 an anonymous `:meta` node). The marker round-trips render + checkpoint
 normalize intact.
 
+## External-dependency effect boundary (P4-deps M3)
+
+A call into an opaque **Tier-1 dependency** is an effect anchor **by default**
+(worst-case — slopp can't see the dep's body, so it assumes effect; Koka
+`io`-top / gradual "unknown = top"). Mechanism: `index/effectful-vars`/
+`effect-violations` take an `external-ns?` predicate + `pure-vars` set;
+`edit/ns-warnings` builds `external-ns?` from `(:dep-ns store)` (the provided
+namespaces from M4's surface) and `pure-vars` from `(:dep-pure store)`.
+Narrow a false positive (e.g. a pure math/parse lib) with `deps_pure`
+(a `:deps-pure` delta → `:dep-pure` set). NOTE: bang-named external vars
+(`jdbc/execute!`) were already caught by `bang-target?`; the net-new surface
+is **non-bang** external calls (`jdbc/query`, `json/write-str`). Still
+WARNINGS, never rejections. Store-ns and clojure-stdlib calls are unaffected
+(not in `:dep-ns`).
+
 ## `!`-effect checking (D6, `slopp.index`)
 
 - A var is **effectful iff it transitively reaches an effectful leaf** through

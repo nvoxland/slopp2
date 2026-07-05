@@ -421,10 +421,17 @@ the change here (same commit).
     source and runs `render/ns-path` in the self-hosted image; an `^:unsafe`
     def holding the banned symbols (slopp.edit `banned-syms` shape) ingests
     cleanly.
-  - Follow-ons (planned M4→M7): clj-kondo dep surface analysis (memoized per
-    `coord@version`), the effect boundary, an `^:integration` test tier the
-    fast oracle skips, and a GraalVM native-compat gate. `.context/dependencies.md`
-    will hold the full model (M7).
+  - **M4 shipped:** `slopp.deps` — a dep's own jars (classpath diff) →
+    clj-kondo API surface (namespaces + var arities/docs/macro flags),
+    memoized per `coord@version` (process memo + durable `dep_surface`
+    table). `deps-add!` returns `:namespaces`+`:vars`.
+  - **M3 shipped:** the effect boundary (see `dialect.md`) — external dep
+    calls effectful by default; store gains `:dep-ns` (from M4 surfaces) +
+    `:dep-pure` (materialized in meta, carried in `:deps-add`/`:deps-pure`
+    deltas, branch/merge-aware); `deps_pure` narrows. Warnings only.
+  - Follow-ons (planned M5→M7): an `^:integration` test tier the fast oracle
+    skips, and a GraalVM native-compat gate. `.context/dependencies.md` will
+    hold the full model (M7).
 
 ## H — host
 

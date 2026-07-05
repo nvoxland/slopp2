@@ -67,15 +67,25 @@
   (str/ends-with? (name target) "!"))
 
 (defn effectful-vars
-  "Set of user var nodes that transitively reach an effectful leaf OR a
-  bang-named callee (D6). Monotonic fixpoint — cycle-safe."
-  [analysis]
-  (let [edges (call-graph analysis)]
-    (loop [eff (set (for [[n ts] edges
-                          :when (some #(or (effectful-leaves %) (bang-target? %)) ts)]
-                      n))]
-      (let [eff' (into eff (for [[n ts] edges :when (some eff ts)] n))]
-        (if (= eff eff') eff (recur eff'))))))
+  "Set of user var nodes that transitively reach an effectful anchor (D6).
+  An anchor is a `!`-leaf, a bang-named callee, OR (M3) a call into an OPAQUE
+  external dependency — a target whose namespace `external-ns?` accepts and
+  which is not in `pure-vars` (worst-case: slopp can't see the dep's body, so
+  the call is effectful unless the author asserts the var pure). Monotonic
+  fixpoint — cycle-safe. 1-arg = the pre-M3 behavior (no external boundary)."
+  ([analysis] (effectful-vars analysis nil nil))
+  ([analysis external-ns? pure-vars]
+   (let [edges (call-graph analysis)
+         ext?  (or external-ns? (constantly false))
+         pure  (or pure-vars #{})
+         anchor? (fn [t]
+                   (or (effectful-leaves t)
+                       (bang-target? t)
+                       (and (ext? (some-> (namespace t) symbol))
+                            (not (contains? pure t)))))]
+     (loop [eff (set (for [[n ts] edges :when (some anchor? ts)] n))]
+       (let [eff' (into eff (for [[n ts] edges :when (some eff ts)] n))]
+         (if (= eff eff') eff (recur eff')))))))
 
 (defn- bang? [nm] (str/ends-with? (str nm) "!"))
 
@@ -89,19 +99,21 @@
 (defn effect-violations
   "Vars whose `!`-naming disagrees with their computed effectfulness (D6). Each:
   {:var node :effectful? bool :named-bang? bool :suggest new-name-string}.
-  deftest vars are exempt (T1)."
-  [analysis]
-  (let [eff (effectful-vars analysis)]
-    (for [d (:var-definitions analysis)
-          :when (not (test-definition? d))
-          :let [n         (node (:ns d) (:name d))
-                effectful (contains? eff n)
-                named     (bang? (:name d))]
-          :when (not= effectful named)]
-      {:var n :effectful? effectful :named-bang? named
-       :suggest (if effectful
-                  (str (:name d) "!")
-                  (str/replace (str (:name d)) #"!+$" ""))})))
+  deftest vars are exempt (T1). `external-ns?`/`pure-vars` (M3) extend the
+  effect anchors to opaque-dependency calls."
+  ([analysis] (effect-violations analysis nil nil))
+  ([analysis external-ns? pure-vars]
+   (let [eff (effectful-vars analysis external-ns? pure-vars)]
+     (for [d (:var-definitions analysis)
+           :when (not (test-definition? d))
+           :let [n         (node (:ns d) (:name d))
+                 effectful (contains? eff n)
+                 named     (bang? (:name d))]
+           :when (not= effectful named)]
+       {:var n :effectful? effectful :named-bang? named
+        :suggest (if effectful
+                   (str (:name d) "!")
+                   (str/replace (str (:name d)) #"!+$" ""))}))))
 
 (defn analyze-with-locals
   "Like `analyze`, but including local-binding definitions and usages

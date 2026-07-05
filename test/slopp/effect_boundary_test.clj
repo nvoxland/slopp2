@@ -1,0 +1,72 @@
+(ns slopp.effect-boundary-test
+  "External deps M3: a call into an opaque Tier-1 dependency is treated as
+  EFFECTFUL by default (worst-case — Koka io-top / gradual 'unknown = top'),
+  because slopp can't see the dep's body. Narrowable by marking the dep var
+  `:pure`. Store/stdlib calls are unaffected. Warnings, never rejections."
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
+            [slopp.api :as api]
+            [slopp.edit :as edit]
+            [slopp.store :as store])
+  (:import [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]))
+
+(defn- temp-dir []
+  (str (Files/createTempDirectory "slopp-eff-test" (make-array FileAttribute 0))))
+
+(defn- warns-about? [sess ns-sym nm]
+  (some #(re-find (re-pattern (str "\\b" nm "\\b")) (str %))
+        (edit/ns-warnings (:store @sess) ns-sym)))
+
+(deftest external-dep-call-is-effectful-by-default
+  (let [sess (api/open! {:dir (temp-dir)})]     ; durable → surface is cached
+    (try
+      (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
+                     :agent "a")
+      ;; dump calls a NON-bang external var (json/write-str) — slopp can't see
+      ;; its body, so dump is effectful and should be named dump!
+      (api/ingest! sess 'ex.core
+                   (str "(ns ex.core (:require [clojure.data.json :as json]))\n\n"
+                        "(defn dump [x] (json/write-str x))\n"))
+      (testing "the external call makes the caller effectful (a !-name warning)"
+        (is (warns-about? sess 'ex.core 'dump)
+            (pr-str (edit/ns-warnings (:store @sess) 'ex.core))))
+      (testing "marking the dep var :pure narrows it — no more warning"
+        (api/deps-pure! sess 'clojure.data.json/write-str :agent "a")
+        (is (not (warns-about? sess 'ex.core 'dump))))
+      (testing "the :pure annotation persists (delta + reopen)"
+        (is (contains? (:dep-pure (:store @sess)) 'clojure.data.json/write-str)))
+      (finally (api/close! sess)))))
+
+(deftest store-and-stdlib-calls-are-not-external
+  (let [sess (api/open! {:dir (temp-dir)})]
+    (try
+      (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
+                     :agent "a")
+      ;; pure fn using only clojure.core/clojure.string + a store call
+      (api/ingest! sess 'ex.pure
+                   (str "(ns ex.pure (:require [clojure.string :as s]))\n\n"
+                        "(defn shout [x] (s/upper-case (str x)))\n"))
+      (testing "a stdlib-only fn is NOT flagged effectful"
+        (is (not (warns-about? sess 'ex.pure 'shout))))
+      (finally (api/close! sess)))))
+
+(deftest dep-namespaces-persist-and-reopen
+  (let [dir (temp-dir)]
+    (let [sess (api/open! {:dir dir})]
+      (try
+        (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
+                       :agent "a")
+        (api/deps-pure! sess 'clojure.data.json/write-str :agent "a")
+        (is (contains? (get (:dep-ns (:store @sess))
+                            'org.clojure/data.json)
+                       'clojure.data.json))
+        (finally (api/close! sess))))
+    (testing "a reopened session reconstructs :dep-ns and :dep-pure"
+      (let [s2 (api/open! {:dir dir})]
+        (try
+          (is (contains? (get (:dep-ns (:store @s2)) 'org.clojure/data.json)
+                         'clojure.data.json))
+          (is (contains? (:dep-pure (:store @s2))
+                         'clojure.data.json/write-str))
+          (finally (api/close! s2)))))))

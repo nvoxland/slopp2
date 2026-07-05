@@ -1829,13 +1829,13 @@
     (not (and (map? coord) (seq coord)))
     {:error "dependency coord must be a non-empty map like {:mvn/version \"1.2.3\"}"}
     :else
-    (do
+    (let [surf (analyze-dep! session lib coord)]                 ; M4: API surface
       (commit-appended! session
-                        #(first (store/record-deps-add % lib coord
-                                                       :agent agent :prompt prompt))
+                        #(first (store/record-deps-add
+                                 % lib coord :agent agent :prompt prompt
+                                 :namespaces (:namespaces surf)))  ; M3: dep-ns index
                         [])
-      (let [surf (analyze-dep! session lib coord)                 ; M4: API surface
-            base (cond-> {:added lib :coord coord}
+      (let [base (cond-> {:added lib :coord coord}
                    surf (assoc :namespaces (vec (:namespaces surf))
                                :vars (count (:vars surf))))]
         (if-let [hot (repl/add-libs! (:image @session) {lib coord})]
@@ -1862,6 +1862,26 @@
   "The store's external dependency manifest: {lib coord}."
   [session]
   (:deps (:store @session)))
+
+(defn deps-pure!
+  "Assert that dependency var `sym` (fully-qualified, e.g.
+  `clojure.data.json/write-str`) is PURE — narrowing M3's effectful-by-default
+  boundary so callers of it aren't flagged effectful. Returns {:pure sym}."
+  [session sym & {:keys [agent prompt]}]
+  (commit-appended! session
+                    #(first (store/record-deps-pure % sym true
+                                                    :agent agent :prompt prompt))
+                    [])
+  {:pure sym})
+
+(defn deps-unpure!
+  "Undo `deps-pure!` for `sym` (calls into it are effectful again)."
+  [session sym & {:keys [agent prompt]}]
+  (commit-appended! session
+                    #(first (store/record-deps-pure % sym false
+                                                    :agent agent :prompt prompt))
+                    [])
+  {:unpure sym})
 
 (defn edit-subform!
   "Item 5 — paredit's invariant, agent-shaped: replace the UNIQUE structural

@@ -107,9 +107,13 @@
       {:error (str "bad require clause: " (ex-message e))})))
 
 (defn ns-warnings
-  "D6 `!`-effect violations for `ns-sym`'s current state."
+  "D6 `!`-effect violations for `ns-sym`'s current state. The external-dep
+  boundary (M3): a call into any namespace provided by a manifest dependency
+  (`:dep-ns`) is an effect anchor unless the var is in `:dep-pure`."
   [store ns-sym]
-  (index/effect-violations (index/analyze (render/render-ns store ns-sym))))
+  (let [dep-nses (into #{} (mapcat identity) (vals (:dep-ns store)))]
+    (index/effect-violations (index/analyze (render/render-ns store ns-sym))
+                             dep-nses (:dep-pure store))))
 
 (defn replace-form
   "Pure edit: validate `new-source` (one dialect-legal form) and replace the form

@@ -78,7 +78,13 @@
                         (str (:next-id store))])
      (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('deps', ?)
                          ON CONFLICT(k) DO UPDATE SET v = excluded.v"
-                        (pr-str (:deps store {}))]))
+                        (pr-str (:deps store {}))])
+     (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('dep-ns', ?)
+                         ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                        (pr-str (:dep-ns store {}))])
+     (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('dep-pure', ?)
+                         ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                        (pr-str (:dep-pure store #{}))]))
    nil))
 
 (defn data-version
@@ -123,6 +129,12 @@
         (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('deps', ?)
                             ON CONFLICT(k) DO UPDATE SET v = excluded.v"
                            (pr-str (:deps store {}))])
+        (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('dep-ns', ?)
+                            ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                           (pr-str (:dep-ns store {}))])
+        (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('dep-pure', ?)
+                            ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                           (pr-str (:dep-pure store #{}))])
         true))
     (catch clojure.lang.ExceptionInfo e
       (if (::head-moved (ex-data e)) false (throw e)))
@@ -253,4 +265,10 @@
      :next-id    next-id
      :line-id    (:meta/v (jdbc/execute-one!
                            conn ["SELECT v FROM meta WHERE k = 'line-id'"]))
-     :deps       (deps conn)}))
+     :deps       (deps conn)
+     :dep-ns     (or (some-> (jdbc/execute-one!
+                              conn ["SELECT v FROM meta WHERE k = 'dep-ns'"])
+                             :meta/v edn/read-string) {})
+     :dep-pure   (or (some-> (jdbc/execute-one!
+                              conn ["SELECT v FROM meta WHERE k = 'dep-pure'"])
+                             :meta/v edn/read-string) #{})}))
