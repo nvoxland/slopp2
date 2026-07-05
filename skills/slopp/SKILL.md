@@ -107,7 +107,9 @@ add `(declare name)` first, exactly as in ordinary Clojure.
 **Using an external library?** `deps_add` it first (it hot-loads into the
 image, no restart), then `(:require ...)` it like normal. The library's own
 code is opaque to slopp's analysis, so a form that CALLS it is treated as
-effectful by default (name it `!` or mark the dep var pure). **`^:unsafe`**
+effectful by default (name it `!`, or `deps_pure` it — at var, whole-namespace,
+or whole-lib granularity, so a wholesale-pure library like rewrite-clj is one
+call, not one per var). **`^:unsafe`**
 on a top-level form opts it out of the dialect ban (macros, `binding`,
 `eval`, …) — the last resort for boundary code the analyzer can't vet; it's
 greppable and shows as `:unsafe? true`, and does NOT silence `!`-warnings.

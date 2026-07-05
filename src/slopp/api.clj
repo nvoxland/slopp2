@@ -1911,25 +1911,41 @@
   [session]
   (:deps (:store @session)))
 
-(defn deps-pure!
-  "Assert that dependency var `sym` (fully-qualified, e.g.
-  `clojure.data.json/write-str`) is PURE — narrowing M3's effectful-by-default
-  boundary so callers of it aren't flagged effectful. Returns {:pure sym}."
-  [session sym & {:keys [agent prompt]}]
+(defn- record-pure!
+  "Mark each of `syms` pure/un-pure in ONE appended commit (N :deps-pure deltas)."
+  [session syms pure? {:keys [agent prompt]}]
   (commit-appended! session
-                    #(first (store/record-deps-pure % sym true
-                                                    :agent agent :prompt prompt))
-                    [])
-  {:pure sym})
+                    (fn [base]
+                      (reduce (fn [s x]
+                                (first (store/record-deps-pure s x pure?
+                                                               :agent agent :prompt prompt)))
+                              base syms))
+                    []))
+
+(defn deps-pure!
+  "Assert a dependency is PURE — narrowing M3's effectful-by-default boundary so
+  callers aren't flagged effectful. `target` lands at THREE granularities: a
+  fully-qualified var (`clojure.data.json/write-str`), a whole NAMESPACE
+  (`clojure.data.json`, every var in it), or a manifest LIB
+  (`org.clojure/data.json`, which expands to every namespace the dep provides —
+  the ergonomic default for a wholesale-pure library like rewrite-clj). Returns
+  {:pure sym}, or {:lib sym :namespaces [...]} for a lib."
+  [session target & {:keys [agent prompt]}]
+  (let [st   (:store @session)
+        lib? (contains? (:deps st) target)
+        nses (when lib? (vec (get (:dep-ns st) target)))]
+    (record-pure! session (or nses [target]) true {:agent agent :prompt prompt})
+    (if lib? {:lib target :namespaces nses} {:pure target})))
 
 (defn deps-unpure!
-  "Undo `deps-pure!` for `sym` (calls into it are effectful again)."
-  [session sym & {:keys [agent prompt]}]
-  (commit-appended! session
-                    #(first (store/record-deps-pure % sym false
-                                                    :agent agent :prompt prompt))
-                    [])
-  {:unpure sym})
+  "Undo `deps-pure!` for `target` (a var, namespace, or manifest lib — the same
+  granularities as `deps-pure!`). Calls into it are effectful again."
+  [session target & {:keys [agent prompt]}]
+  (let [st   (:store @session)
+        lib? (contains? (:deps st) target)
+        nses (when lib? (vec (get (:dep-ns st) target)))]
+    (record-pure! session (or nses [target]) false {:agent agent :prompt prompt})
+    (if lib? {:lib target :namespaces nses} {:unpure target})))
 
 (defn edit-subform!
   "Item 5 — paredit's invariant, agent-shaped: replace the UNIQUE structural

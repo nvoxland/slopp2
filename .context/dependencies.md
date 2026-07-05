@@ -59,6 +59,19 @@ var is asserted pure via `deps_pure`. Bang-named external vars (`execute!`)
 were already caught. Store-ns and clojure-stdlib calls are unaffected. Still
 **warnings, never rejections** — honest labeling.
 
+**`:pure` narrows at three granularities** (so a wholesale-pure library isn't
+enumerated var-by-var — self-host dogfooding finding: slopp is built on
+rewrite-clj + clj-kondo, both pure, and per-var `:pure` flooded its own code
+with warnings). `deps_pure {target}` accepts a **var** (`clojure.data.json/write-str`),
+a whole **namespace** (`clojure.data.json` — every var in it), or a manifest
+**lib** (`org.clojure/data.json` — `api/deps-pure!` expands it to every
+namespace the dep provides via `:dep-ns`, recording one `:deps-pure` delta per
+namespace in a single commit). `:dep-pure` therefore holds symbols at var AND
+namespace granularity; the anchor check (`index/effectful-vars`) treats a call
+`t` as pure when `:dep-pure` contains `t` OR its bare namespace. All three
+persist/branch/merge identically (the delta already carries an arbitrary
+`:sym`).
+
 ## Impure deps & testing (M5 + convention)
 
 - **`^:integration` test tier.** Tag a deftest `^:integration` (on the test

@@ -50,7 +50,11 @@ A call into an opaque **Tier-1 dependency** is an effect anchor **by default**
 `edit/ns-warnings` builds `external-ns?` from `(:dep-ns store)` (the provided
 namespaces from M4's surface) and `pure-vars` from `(:dep-pure store)`.
 Narrow a false positive (e.g. a pure math/parse lib) with `deps_pure`
-(a `:deps-pure` delta → `:dep-pure` set). NOTE: bang-named external vars
+(a `:deps-pure` delta → `:dep-pure` set) at **var, namespace, or whole-lib**
+granularity — a lib expands to every namespace it provides, so a wholesale-pure
+dependency (rewrite-clj, clj-kondo) is narrowed in one call rather than
+per-var; the anchor check treats a call as pure when `:dep-pure` holds the var
+OR its namespace. NOTE: bang-named external vars
 (`jdbc/execute!`) were already caught by `bang-target?`; the net-new surface
 is **non-bang** external calls (`jdbc/query`, `json/write-str`). Still
 WARNINGS, never rejections. Store-ns and clojure-stdlib calls are unaffected

@@ -441,6 +441,15 @@ the change here (same commit).
     calls effectful by default; store gains `:dep-ns` (from M4 surfaces) +
     `:dep-pure` (materialized in meta, carried in `:deps-add`/`:deps-pure`
     deltas, branch/merge-aware); `deps_pure` narrows. Warnings only.
+    - **M3 follow-up (self-host finding): `:pure` narrows at var, namespace,
+      OR lib granularity.** Per-var `:pure` flooded slopp's own rewrite-clj /
+      clj-kondo-heavy code with warnings (a wholesale-pure library needs dozens
+      of assertions). Now `deps_pure {target}` accepts a var, a whole
+      namespace, or a manifest lib (expanded to its provided namespaces via
+      `:dep-ns`); the `effectful-vars` anchor treats a call as pure when
+      `:dep-pure` contains the var OR its namespace. No store/delta/merge change
+      — `:dep-pure` already carries arbitrary symbols; the MCP arg went
+      `var` → `target`. (Surfaced in `ideas/self-host-log.md` Attempt 2.)
   - **M5 shipped:** the `^:integration` test tier (see `verification.md`) —
     the fast per-write path skips `^:integration` tests via a
     `skip-integration?` filter in `rt/traced-run`; `test_run`/`checkpoint`/

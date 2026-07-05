@@ -70,19 +70,24 @@
   "Set of user var nodes that transitively reach an effectful anchor (D6).
   An anchor is a `!`-leaf, a bang-named callee, OR (M3) a call into an OPAQUE
   external dependency — a target whose namespace `external-ns?` accepts and
-  which is not in `pure-vars` (worst-case: slopp can't see the dep's body, so
-  the call is effectful unless the author asserts the var pure). Monotonic
-  fixpoint — cycle-safe. 1-arg = the pre-M3 behavior (no external boundary)."
+  which `pure-vars` does not cover (worst-case: slopp can't see the dep's body,
+  so the call is effectful unless the author asserts it pure). `pure-vars` is
+  matched at TWO granularities: the fully-qualified var (`ext.lib/go`) OR its
+  bare namespace (`ext.lib`) — so a whole pure library can be narrowed without
+  enumerating every var. Monotonic fixpoint — cycle-safe. 1-arg = the pre-M3
+  behavior (no external boundary)."
   ([analysis] (effectful-vars analysis nil nil))
   ([analysis external-ns? pure-vars]
    (let [edges (call-graph analysis)
          ext?  (or external-ns? (constantly false))
          pure  (or pure-vars #{})
+         pure? (fn [t] (or (contains? pure t)
+                           (contains? pure (some-> (namespace t) symbol))))
          anchor? (fn [t]
                    (or (effectful-leaves t)
                        (bang-target? t)
                        (and (ext? (some-> (namespace t) symbol))
-                            (not (contains? pure t)))))]
+                            (not (pure? t)))))]
      (loop [eff (set (for [[n ts] edges :when (some anchor? ts)] n))]
        (let [eff' (into eff (for [[n ts] edges :when (some eff ts)] n))]
          (if (= eff eff') eff (recur eff')))))))

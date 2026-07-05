@@ -37,6 +37,18 @@
     (is (not (contains? (index/effectful-vars an) 'w/pure-view)))
     (is (some #(= 'w/save-all (:var %)) (index/effect-violations an)))))
 
+(deftest external-purity-narrows-at-var-and-namespace-granularity   ; M3 coarser :pure
+  (let [an   (index/analyze
+              (str "(ns c (:require [ext.lib :as e]))\n"
+                   "(defn f [x] (e/go x))\n"))
+        ext? #{'ext.lib}]
+    (testing "an external call is effectful by default"
+      (is (contains? (index/effectful-vars an ext? #{}) 'c/f)))
+    (testing "var-level :pure narrows it (existing granularity)"
+      (is (not (contains? (index/effectful-vars an ext? #{'ext.lib/go}) 'c/f))))
+    (testing "NAMESPACE-level :pure narrows every var in that namespace (new)"
+      (is (not (contains? (index/effectful-vars an ext? #{'ext.lib}) 'c/f))))))
+
 (deftest deftests-are-exempt-from-bang-rule            ; T1
   (let [an (index/analyze
             (str "(ns d (:require [clojure.test :refer [deftest is]]))\n"

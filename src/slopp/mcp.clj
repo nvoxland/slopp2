@@ -238,12 +238,12 @@
     :description "This store's external dependency manifest: {lib coord}."
     :inputSchema {:type "object" :properties {}}}
    {:name "deps_pure"
-    :description "Assert a dependency var is PURE (no effect slopp should track), narrowing the effectful-by-default boundary so callers aren't flagged. var is fully-qualified, e.g. \"clojure.data.json/write-str\". Pass pure=false to undo."
+    :description "Assert a dependency is PURE (no effect slopp should track), narrowing the effectful-by-default boundary so callers aren't flagged. `target` lands at three granularities: a fully-qualified var (\"clojure.data.json/write-str\"), a whole namespace (\"clojure.data.json\", every var in it), or a manifest lib (\"org.clojure/data.json\", which expands to every namespace the dep provides — best for a wholesale-pure library like rewrite-clj). Pass pure=false to undo."
     :inputSchema {:type "object"
-                  :properties {:var {:type "string"}
+                  :properties {:target {:type "string"}
                                :pure {:type "boolean"}
                                :agent {:type "string"}}
-                  :required ["var"]}}
+                  :required ["target"]}}
    {:name "test_run"
     :description "Run tests in the live image and record the result. No :ns = EVERY namespace's tests in one call (the full-project sweep). :only restricts to named tests; :fresh true restarts first for a guaranteed-faithful run."
     :inputSchema {:type "object"
@@ -587,8 +587,8 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                    :agent (:agent a)))
       "deps_list"          (text (api/deps-list session))
       "deps_pure"          (text (if (false? (:pure a))
-                                   (api/deps-unpure! session (sym :var) :agent (:agent a))
-                                   (api/deps-pure! session (sym :var) :agent (:agent a))))
+                                   (api/deps-unpure! session (sym :target) :agent (:agent a))
+                                   (api/deps-pure! session (sym :target) :agent (:agent a))))
       "query_git"          (text (if-let [u (:git-url @session)]
                                    {:url u
                                     :remote (str "git remote add slopp " u)

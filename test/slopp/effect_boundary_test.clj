@@ -38,6 +38,33 @@
         (is (contains? (:dep-pure (:store @sess)) 'clojure.data.json/write-str)))
       (finally (api/close! sess)))))
 
+(deftest pure-narrows-at-namespace-and-lib-granularity   ; M3 coarser :pure
+  ;; slopp is built on wholesale-pure libs (rewrite-clj, clj-kondo); marking
+  ;; every var pure one call at a time floods self-host code with warnings, so
+  ;; :pure also lands at namespace and whole-dep granularity.
+  (let [sess (api/open! {:dir (temp-dir)})]
+    (try
+      (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
+                     :agent "a")
+      (api/ingest! sess 'ex.core
+                   (str "(ns ex.core (:require [clojure.data.json :as json]))\n\n"
+                        "(defn dump [x] (json/write-str x))\n"))
+      (is (warns-about? sess 'ex.core 'dump))
+      (testing "marking the whole NAMESPACE pure narrows every var in it"
+        (api/deps-pure! sess 'clojure.data.json :agent "a")
+        (is (not (warns-about? sess 'ex.core 'dump)))
+        (is (contains? (:dep-pure (:store @sess)) 'clojure.data.json)))
+      (testing "un-pure at namespace granularity restores the warning"
+        (api/deps-unpure! sess 'clojure.data.json :agent "a")
+        (is (warns-about? sess 'ex.core 'dump)))
+      (testing "marking the whole LIB pure expands to its provided namespaces"
+        (let [r (api/deps-pure! sess 'org.clojure/data.json :agent "a")]
+          (is (= 'org.clojure/data.json (:lib r)))
+          (is (contains? (set (:namespaces r)) 'clojure.data.json)))
+        (is (not (warns-about? sess 'ex.core 'dump)))
+        (is (contains? (:dep-pure (:store @sess)) 'clojure.data.json)))
+      (finally (api/close! sess)))))
+
 (deftest store-and-stdlib-calls-are-not-external
   (let [sess (api/open! {:dir (temp-dir)})]
     (try
