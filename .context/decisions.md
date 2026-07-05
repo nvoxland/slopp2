@@ -429,9 +429,14 @@ the change here (same commit).
     calls effectful by default; store gains `:dep-ns` (from M4 surfaces) +
     `:dep-pure` (materialized in meta, carried in `:deps-add`/`:deps-pure`
     deltas, branch/merge-aware); `deps_pure` narrows. Warnings only.
-  - Follow-ons (planned M5→M7): an `^:integration` test tier the fast oracle
-    skips, and a GraalVM native-compat gate. `.context/dependencies.md` will
-    hold the full model (M7).
+  - **M5 shipped:** the `^:integration` test tier (see `verification.md`) —
+    the fast per-write path skips `^:integration` tests via a
+    `skip-integration?` filter in `rt/traced-run`; `test_run`/`checkpoint`/
+    `commit_point` include them (`:include-integration?`). A red integration
+    test never blocks a fast edit — the point, for DB-backed deps behind a
+    capability.
+  - Follow-on (planned M6→M7): a GraalVM native-compat gate.
+    `.context/dependencies.md` will hold the full model (M7).
 
 ## H — host
 

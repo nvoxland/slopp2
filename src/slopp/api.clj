@@ -1101,10 +1101,13 @@
 
 (defn- traced-run!
   "Run `test-ns`'s tests (all, or `only` names) with form-tracing; absorb the
-  observed test→form map into the session; return the summary."
-  [session test-ns only]
+  observed test→form map into the session; return the summary.
+  `skip-integration?` drops `^:integration` tests (M5, the fast-path default)."
+  [session test-ns only & [skip-integration?]]
   (let [{:keys [image store]} @session
-        {:keys [summary trace]} (image/traced-test-run image store test-ns :only only)]
+        {:keys [summary trace]} (image/traced-test-run
+                                 image store test-ns :only only
+                                 :skip-integration? skip-integration?)]
     (swap! session update :test-map merge trace)
     summary))
 
@@ -1152,9 +1155,10 @@
   a red clearly caused by the just-edited forms returns immediately as
   {:diagnosis :genuine} — no restart, no second run. `:fresh true` restarts
   FIRST and runs once against a guaranteed-faithful image."
-  [session test-ns only & {:keys [edited fresh]}]
+  [session test-ns only & {:keys [edited fresh include-integration?]}]
   (when fresh (fresh-image! session))
-  (let [r1 (traced-run! session test-ns only)]
+  (let [skip? (not include-integration?)               ; M5: fast path skips
+        r1    (traced-run! session test-ns only skip?)]
     (cond
       (green? r1) r1
 
@@ -1162,7 +1166,7 @@
 
       (suspicious-red? session edited r1)
       (do (fresh-image! session)
-          (let [r2 (traced-run! session test-ns only)]
+          (let [r2 (traced-run! session test-ns only skip?)]
             (if (green? r2)
               (assoc r2 :staleness-detected true)
               (assoc r2 :fresh-confirmed true))))
@@ -1187,9 +1191,10 @@
   "Diagnosed run of `affected` tests (grouped by their namespace), or of all of
   `default-ns`'s tests when there's no trace information. `:edited` (the
   just-changed form qsyms) powers the D5.1 genuine-vs-suspicious call."
-  [session default-ns affected & {:keys [edited fresh]}]
+  [session default-ns affected & {:keys [edited fresh include-integration?]}]
   (if (nil? affected)
-    (diagnosed-run! session default-ns nil :edited edited :fresh fresh)
+    (diagnosed-run! session default-ns nil :edited edited :fresh fresh
+                    :include-integration? include-integration?)
     (reduce (fn [acc [tns tsyms]]
               (merge-with (fn [a b]
                             (cond (number? a) (+ a b)
@@ -1197,7 +1202,8 @@
                                   :else (or b a)))
                           acc
                           (diagnosed-run! session tns (mapv (comp symbol name) tsyms)
-                                          :edited edited :fresh fresh)))
+                                          :edited edited :fresh fresh
+                                          :include-integration? include-integration?)))
             {}
             (group-by (comp symbol namespace) affected))))
 
@@ -1507,7 +1513,8 @@
                                             (str (or (:name e) (:id e)))))))
                           (forms-changed-since st last-verify))
         summary     (diagnosed-run! session ns-sym (seq only)
-                                    :edited edited :fresh fresh)]
+                                    :edited edited :fresh fresh
+                                    :include-integration? true)]  ; M5: explicit run
     (commit-appended! session
                       #(store/record-verification % ns-sym summary) [])
     (with-ms summary t0)))
@@ -1567,7 +1574,8 @@
                   affected (when (not-any? nil? per)
                              (vec (sort (distinct (apply concat per)))))
                   s        (run-verification! session main-ns affected
-                                              :edited (set (map :form rewrites)))]
+                                              :edited (set (map :form rewrites))
+                                              :include-integration? true)]  ; M5
               (commit-appended! session
                                 #(store/record-verification % main-ns s) [])
               s)))

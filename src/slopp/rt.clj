@@ -75,7 +75,7 @@
   Failure details are captured by rebinding clojure.test's dynamic `report`
   multimethod (F1) — without this they'd be printed to the image's stdout and
   lost. Bounded: ≤20 entries, values truncated to 400 chars."
-  [test-ns target-nses only]
+  [test-ns target-nses only & [skip-integration?]]
   (let [test-nses (if (coll? test-ns) test-ns [test-ns]) ; F-3c1: whole project
         touched   (atom #{})
         originals (atom {})
@@ -95,6 +95,10 @@
       (let [tvars    (cond->> (mapcat #(filter (comp :test meta)
                                                (vals (ns-interns %)))
                                       test-nses)
+                       ;; M5: the fast per-write path skips ^:integration tests
+                       ;; (external-system tests — a DB dep shouldn't fire on
+                       ;; every edit); checkpoint/commit/test_run include them
+                       skip-integration? (remove (comp :integration meta))
                        only (filter (comp (set only) :name meta)))
             counters (ref t/*initial-report-counters*)
             record   (fn [m]

@@ -37,6 +37,14 @@ The oracle must never return a false verdict. Everything here serves that.
    forces a faithful single run. Every write path passes its `:edited` qsym
    set into `run-verification!` — keep that plumbing when adding write ops,
    or reds regress to conservative restarts.
+   **Integration tier (P4-deps M5):** a `^:integration`-tagged deftest (tag
+   on the test NAME) is SKIPPED by the fast per-write path (`traced-run` /
+   `traced-test-run` take `skip-integration?`, default on for edits) so an
+   external-system test — a DB dep behind a capability — doesn't fire on
+   every keystroke and a red one never blocks an edit. `test_run`,
+   `checkpoint`, and `commit_point` pass `:include-integration? true` and run
+   them. It's a plain runtime-meta filter; `affected-tests` is unaffected
+   (skipped tests just never enter the trace).
 4. **Warm spare.** `{:warm-spare? true}` keeps a `future`-started image
    warming; `fresh-image!` swaps to it (<~3s vs ~6-8s cold boot) and starts
    the next spare. On for the MCP server. `close!` derefs and stops the

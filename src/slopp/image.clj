@@ -33,12 +33,13 @@
   `only` (a coll of plain test names) restricts which tests run. `test-ns`
   may be a collection — whole-project verification in ONE eval (F-3c1).
   Returns {:summary {...} :trace {test-sym #{form-sym ...}}}."
-  [handle store test-ns & {:keys [only]}]
+  [handle store test-ns & {:keys [only skip-integration?]}]
   (let [targets (if (coll? test-ns)                 ; F-3c1: union of closures
                   (into #{} (mapcat #(store/ns-closure store %)) test-ns)
                   (store/ns-closure store test-ns))]
     (first (repl/eval! handle
-                       (format "(slopp.rt/traced-run '%s '%s '%s)"
+                       (format "(slopp.rt/traced-run '%s '%s '%s %s)"
                                (if (coll? test-ns) (vec test-ns) test-ns)
                                (vec (sort targets))
-                               (pr-str (some-> only vec)))))))
+                               (pr-str (some-> only vec))
+                               (boolean skip-integration?))))))
