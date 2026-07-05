@@ -69,6 +69,14 @@
 - Store namespaces have **no classpath presence**; `load-ns!` marks
   `*loaded-libs*`. Cross-ns loads must be TOPOLOGICAL (`ns-dependency-order`
   — X3: map order goes hash past 8 entries and silently drops namespaces).
+- **External deps are Tier 1 (P4-deps):** the owned image is otherwise bare
+  (Clojure + nREPL). A store declares its own libs in a `:deps` manifest
+  (lib→coord) that reaches every image launch via `-Sdeps`
+  (`repl/default-cmd`) and hot-`add-libs` (`image-with-deps!` reconciles the
+  bare spare), and feeds a complete generated `deps.edn`. Store code may
+  `(:require ...)` a declared dep; its *body* stays opaque (not analyzed,
+  effects worst-case — M3). The manifest is a tracked delta stream
+  (`:deps-add`/`:deps-remove`) materialized to a `meta` row.
 - The rendered source is the coordinate system: kondo rows/cols are
   positions in `render-ns` output, translated back via `element-offsets`.
 - Image work is serialized per-eval by the single nREPL session; keep

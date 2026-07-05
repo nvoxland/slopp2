@@ -56,6 +56,16 @@
   foreign-journal sync falls through to a full reload). `:commit` (P4-m7
   milestones) is a marker — since P4-m8 its payload also carries `:tree`
   (byte-exact rendered {ns source} snapshot) and, on imports, `:git-sha`.
+- **External dependency manifest (P4-deps):** `:deps-add`/`:deps-remove` are
+  STATE-carrying deltas (not pure markers) — `replay-delta` assoc/dissoc's
+  `(:deps store)` (lib→coord) so foreign-sync reconstructs the manifest
+  incrementally; `merge-logs` lands foreign deps and surfaces same-lib
+  version divergence as a conflict note. The current manifest is materialized
+  to a `meta` row `'deps'` (written by `persist!`/`append!` from
+  `(:deps store)`, read by `load-store` into `:deps`) so launch/git/native
+  read it O(1) without replaying — `db/deps [conn]` is the session-free read.
+  Branch propagation is free (snapshot goes through persist!). `:deps` is on
+  the store VALUE (like `:next-id`/`:line-id`).
 - `.slopp/` is gitignored; what users commit to VCS is an open Phase-4
   question (the delta DAG is meant to BE the history).
 

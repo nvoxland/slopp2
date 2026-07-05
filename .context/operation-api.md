@@ -108,6 +108,17 @@ is what catches a missing one.
   `query-commits` lists them; commit `:target`s anchor query-changes
   `:from`/`:to` spans. Projection/serving live in `slopp.git`, NOT here —
   the write path stays JGit-free.
+- `deps-add!` / `deps-remove!` / `deps-list` — the external dependency
+  manifest (Tier 1, P4-deps). `deps-add!` records a `:deps-add` delta then
+  HOT-adds the coord to the running image via `repl/add-libs!`
+  (Clojure 1.12 `clojure.repl.deps/add-libs`, no restart; restart fallback on
+  failure) — so store code requiring the lib compiles. `deps-remove!` always
+  restarts (a jar can't unload). The manifest reaches ALL image launches
+  (`image-with-deps!` reconciles the bare warm-spare via add-libs) and the
+  generated `deps.edn` (`build/deps-edn` now takes the manifest; empty is
+  byte-identical to before so the `ours?` guard holds; `*print-namespace-maps*`
+  is bound OFF for determinism). MCP: `deps_add {lib version|coord}`,
+  `deps_remove`, `deps_list`.
 - `restart!` — agent-callable fresh image (D5 escape hatch).
 - `build!` — materialize `.clj` files (the C1/C6 explicit build). With
   `:main` (qualified entry fn) it also emits the O4 native-binary recipe:

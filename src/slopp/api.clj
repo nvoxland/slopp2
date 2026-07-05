@@ -32,10 +32,25 @@
          human-time render-form-history-text)
 
 (defn- start-spare!
-  "Kick off a background-warming spare image (D5 warm spare) if enabled."
+  "Kick off a background-warming spare image (D5 warm spare) if enabled. The
+  spare is launched BARE (deps unknown until a line adopts it); its manifest
+  is reconciled at adoption via `image-with-deps!`."
   [session]
   (when (:warm-spare? @session)
     (swap! session assoc :spare (future (repl/start!)))))
+
+(defn- image-with-deps!
+  "A ready owned image carrying `deps` (lib→coord) on its classpath: adopt the
+  bare `spare` and hot-`add-libs` the manifest into it, falling back to a fresh
+  launch if the spare can't reconcile; or launch fresh with `:deps` when there
+  is no spare. The caller owns spare bookkeeping (nil-ing + rewarming)."
+  [spare deps]
+  (if spare
+    (let [img @spare]
+      (if (and (seq deps) (:err (repl/add-libs! img deps)))
+        (do (repl/stop! img) (repl/start! {:deps deps}))
+        img))
+    (repl/start! {:deps deps})))
 
 (defn open!
   "Start a session: the owned image + the store — loaded from `<dir>/.slopp/`
@@ -45,7 +60,7 @@
   ([{:keys [dir warm-spare? branch-image-ttl-ms]}]
    (let [conn    (when dir (db/open! dir))
          store   (or (some-> conn db/load-store) (store/empty-store))
-         image   (repl/start!)
+         image   (repl/start! {:deps (:deps store)})
          ttl     (or branch-image-ttl-ms 600000)
          session (atom {:store store :image image :db conn
                         :data-version (some-> conn db/data-version)
@@ -1048,8 +1063,8 @@
   construction (the D5 backstop). With a warm spare, the swap avoids a JVM boot
   on the critical path; the next spare starts warming immediately."
   [session]
-  (let [{:keys [image spare]} @session
-        fresh (if spare @spare (repl/start!))]    ; deref: ready or nearly so
+  (let [{:keys [image spare store]} @session
+        fresh (image-with-deps! spare (:deps store))]  ; adopt+reconcile or fresh
     (repl/stop! image)
     (swap! session assoc :image fresh :spare nil)
     (start-spare! session)
@@ -1753,7 +1768,8 @@
                        "a red milestone honestly)")
            :status :red :checkpoint (:checkpoint cp) :test (:test cp)}
           (mark! head status {:checkpoint (:checkpoint cp)}
-                 (merge {:tree tree} extra)))))))
+                 (cond-> (merge {:tree tree} extra)
+                   (seq (:deps st)) (assoc :deps (:deps st)))))))))
 
 (defn query-commits
   "Milestones, newest first:
@@ -1779,6 +1795,52 @@
                    (:agent d) (assoc :agent (:agent d))
                    (or (:git-sha d) (get shas (:id d)))
                    (assoc :sha (or (:git-sha d) (get shas (:id d))))))))))
+
+;; ---------------------------------------------------------------------------
+;; External dependencies (Tier 1) — the per-store manifest
+
+(defn deps-add!
+  "Declare external dependency `lib` (a symbol like `org.clojure/data.json`)
+  at `coord` (a deps.edn coordinate map, e.g. `{:mvn/version \"2.5.0\"}`).
+  Records a `:deps-add` delta (materialized to the store's manifest), then
+  HOT-adds the jar to the running image via add-libs — no restart; on failure
+  it restarts. Returns {:added lib :coord :hot true|:restarted true} | {:error}."
+  [session lib coord & {:keys [agent prompt]}]
+  (cond
+    (not (symbol? lib))
+    {:error "dependency lib must be a symbol like org.clojure/data.json"}
+    (not (and (map? coord) (seq coord)))
+    {:error "dependency coord must be a non-empty map like {:mvn/version \"1.2.3\"}"}
+    :else
+    (do
+      (commit-appended! session
+                        #(first (store/record-deps-add % lib coord
+                                                       :agent agent :prompt prompt))
+                        [])
+      (if-let [hot (repl/add-libs! (:image @session) {lib coord})]
+        (do (fresh-image! session)              ; hot add failed → faithful restart
+            {:added lib :coord coord :restarted true :note (:err hot)})
+        {:added lib :coord coord :hot true}))))
+
+(defn deps-remove!
+  "Drop external dependency `lib` from the manifest. A jar can't be unloaded,
+  so this always restarts the image. Returns {:removed lib :restarted true}
+  or {:error}."
+  [session lib & {:keys [agent prompt]}]
+  (if-not (contains? (:deps (:store @session)) lib)
+    {:error (str lib " is not a declared dependency")}
+    (do
+      (commit-appended! session
+                        #(first (store/record-deps-remove % lib
+                                                          :agent agent :prompt prompt))
+                        [])
+      (fresh-image! session)
+      {:removed lib :restarted true})))
+
+(defn deps-list
+  "The store's external dependency manifest: {lib coord}."
+  [session]
+  (:deps (:store @session)))
 
 (defn edit-subform!
   "Item 5 — paredit's invariant, agent-shaped: replace the UNIQUE structural
@@ -2436,7 +2498,7 @@
   Returns {:image handle} or {:error msg}."
   [session store]
   (let [spare (:spare @session)
-        img   (if spare @spare (repl/start!))]
+        img   (image-with-deps! spare (:deps store))]
     (when spare
       (swap! session assoc :spare nil)
       (start-spare! session))
@@ -2590,8 +2652,10 @@
         cwd      (.getCanonicalFile (io/file "."))
         st       (:store @session)
         de       (io/file target "deps.edn")
+        deps     (:deps st)
         ;; a deps.edn is ours iff it's byte-identical to a generated variant
-        ours?    #(contains? #{(build/deps-edn false) (build/deps-edn true)}
+        ;; (for THIS store's manifest — else a manifest change reads as foreign)
+        ours?    #(contains? #{(build/deps-edn false deps) (build/deps-edn true deps)}
                              (slurp de))
         entry-ns (some-> main namespace symbol)]
     (cond
@@ -2621,7 +2685,7 @@
               (io/make-parents file)
               (spit file (render/render-ns st ns-sym))))
           (when (or main (not (.exists de)))
-            (spit de (build/deps-edn (boolean main))))
+            (spit de (build/deps-edn (boolean main) deps)))
           (cond-> {:built (str target)}
             main
             (assoc :native

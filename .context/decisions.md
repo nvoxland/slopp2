@@ -386,6 +386,37 @@ the change here (same commit).
   position-based: local shadowing of moved fn NAMES is the known v1 edge.
   remove-form accepts a string form-ID (anonymous forms like declares).
 
+- **P4-deps — External dependency support: two trust tiers + a greppable
+  `unsafe` boundary (user-requested; unblocks self-hosting slopp).** The
+  owned image was BARE (Clojure + nREPL), so store code requiring
+  rewrite-clj/JGit/etc. couldn't compile — the blocker for slopp hosting its
+  own source. Design frame (prior art: Rust `unsafe`, Koka/gradual
+  "unknown effect = top", Unison per-hash memoization, capability injection,
+  GraalVM reachability metadata):
+  - **Tier 0 = authored store code** (full guarantees); **Tier 1 = external
+    deps** (declared in a per-store manifest, API-surface analyzed, bodies
+    OPAQUE, effects worst-case unless narrowed).
+  - **`^:unsafe`** = a per-form, greppable, human-discharged opt-out of the
+    dialect ban (M2) — also the fix for the ~12 of slopp's OWN forms using
+    `binding`/`alter-var-root`/`read-string`.
+  - **Effect stance (user):** a call into an external dep is **effectful by
+    default** (M3), narrowable by a per-dep `:pure` set. Warnings, never
+    rejections.
+  - **Dep apply (user):** hot `add-libs` (Clojure 1.12, no restart), restart
+    fallback; removes/downgrades restart (a jar can't unload).
+  - **M1 shipped:** the manifest — `:deps-add`/`:deps-remove` tracked deltas
+    (state-carrying; ride history/branches/merge/foreign-sync) materialized to
+    a `meta` `'deps'` row; threaded into all image launches (`-Sdeps` +
+    `image-with-deps!` reconciling the bare spare via add-libs); a complete
+    generated `deps.edn` (empty manifest byte-identical to before, so the
+    `ours?` guard holds; `*print-namespace-maps*` bound OFF for determinism);
+    tools `deps_add`/`deps_remove`/`deps_list`. Verified live: add-libs
+    hot-loads a dep into the owned nREPL image with no restart.
+  - Follow-ons (planned M4→M7): clj-kondo dep surface analysis (memoized per
+    `coord@version`), the effect boundary, an `^:integration` test tier the
+    fast oracle skips, and a GraalVM native-compat gate. `.context/dependencies.md`
+    will hold the full model (M7).
+
 ## H — host
 
 - **H1 — slopp itself is Clojure/JVM** (same runtime as image + tooling; no

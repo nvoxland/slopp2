@@ -15,7 +15,7 @@
             [rewrite-clj.node :as n]))
 
 (defn empty-store []
-  {:namespaces {} :deltas [] :next-id 0})
+  {:namespaces {} :deltas [] :next-id 0 :deps {}})
 
 (defn- now-ms [] (System/currentTimeMillis))
 
@@ -329,6 +329,35 @@
                 extra  (as-> d (merge extra d)))]
     [(update store' :deltas conj delta) delta]))
 
+(defn record-deps-add
+  "Append a `:deps-add` delta declaring external dependency `lib` at `coord`
+  (a deps.edn coordinate map, e.g. `{:mvn/version \"1.2.3\"}`), and materialize
+  it into the store's `:deps` manifest. A tracked delta (not a pure marker):
+  it rides history / branches / merge / foreign-sync like every write.
+  Returns [store' delta]."
+  [store lib coord & {:keys [agent prompt]}]
+  (let [[did store'] (gen-id store "d")
+        delta (cond-> {:id did :parent (:id (last (:deltas store)))
+                       :op :deps-add :ns '*session* :at (now-ms)
+                       :lib lib :coord coord}
+                agent  (assoc :agent agent)
+                prompt (assoc :prompt prompt))]
+    [(-> store' (update :deltas conj delta) (assoc-in [:deps lib] coord))
+     delta]))
+
+(defn record-deps-remove
+  "Append a `:deps-remove` delta dropping `lib` from the manifest.
+  Returns [store' delta]."
+  [store lib & {:keys [agent prompt]}]
+  (let [[did store'] (gen-id store "d")
+        delta (cond-> {:id did :parent (:id (last (:deltas store)))
+                       :op :deps-remove :ns '*session* :at (now-ms)
+                       :lib lib}
+                agent  (assoc :agent agent)
+                prompt (assoc :prompt prompt))]
+    [(-> store' (update :deltas conj delta) (update :deps dissoc lib))
+     delta]))
+
 (defn record-turn
   "Append a turn marker (:turn-begin carries the VERBATIM user ask — the root
   intent of everything that follows; :turn-end closes the bracket, stable or
@@ -364,6 +393,10 @@
     (case (:op d)
       (:verify :checkpoint :merge :turn-begin :turn-end :commit)
       (with-d store)
+
+      ;; manifest deltas carry state — reconstruct :deps on foreign sync
+      :deps-add    (with-d (assoc-in store [:deps (:lib d)] (:coord d)))
+      :deps-remove (with-d (update store :deps dissoc (:lib d)))
 
       (:replace :rename :normalize)
       (with-d
@@ -551,6 +584,25 @@
                 (case op
                   (:verify :checkpoint :merge)
                   (done st idmap merged conflicts notes changed new-nses applied)
+
+                  :deps-add
+                  ;; a foreign dep declaration: land it, unless the same lib is
+                  ;; pinned to a DIFFERENT coord on our side (version divergence)
+                  (let [lib (:lib d) cur (get-in st [:deps lib])]
+                    (if (and cur (not= cur (:coord d)))
+                      (done st idmap merged
+                            (conj conflicts {:dep lib :ours cur :theirs (:coord d)})
+                            (conj notes {:conflict :deps :lib lib
+                                         :reason "same dependency pinned to different coords"})
+                            changed new-nses (conj applied (:id d)))
+                      (done (assoc-in st [:deps lib] (:coord d))
+                            idmap (inc merged) conflicts notes changed new-nses
+                            (conj applied (:id d)))))
+
+                  :deps-remove
+                  (done (update st :deps dissoc (:lib d))
+                        idmap (inc merged) conflicts notes changed new-nses
+                        (conj applied (:id d)))
 
                   :ingest
                   (let [ns-sym (:ns d)]

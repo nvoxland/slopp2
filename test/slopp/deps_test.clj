@@ -1,0 +1,154 @@
+(ns slopp.deps-test
+  "External dependency support (trust-tiered). M1: the per-store manifest —
+  :deps-add/:deps-remove tracked deltas, materialized to a meta row, reaching
+  the owned image's classpath and the generated deps.edn."
+  (:require [clojure.test :refer [deftest is testing]]
+            [slopp.api :as api]
+            [slopp.build :as build]
+            [slopp.mcp]
+            [slopp.store :as store]
+            [slopp.db :as db])
+  (:import [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]))
+
+(defn- temp-dir []
+  (str (Files/createTempDirectory "slopp-deps-test" (make-array FileAttribute 0))))
+
+;; ---------------------------------------------------------------------------
+;; M1a: the delta model (store)
+
+(deftest deps-delta-model
+  (let [s0 (store/empty-store)]
+    (testing "a fresh store has an empty manifest"
+      (is (= {} (:deps s0))))
+    (let [[s1 d1] (store/record-deps-add s0 'org.clojure/data.json
+                                         {:mvn/version "2.5.0"} :agent "a")]
+      (testing "record-deps-add appends a delta and materializes the coord"
+        (is (= :deps-add (:op d1)))
+        (is (= 'org.clojure/data.json (:lib d1)))
+        (is (= {:mvn/version "2.5.0"} (:coord d1)))
+        (is (= '*session* (:ns d1)))
+        (is (= {'org.clojure/data.json {:mvn/version "2.5.0"}} (:deps s1))))
+      (testing "replay reconstructs :deps incrementally (foreign-sync stays cheap)"
+        (let [replayed (store/replay-delta s0 d1)]
+          (is (some? replayed))
+          (is (= {'org.clojure/data.json {:mvn/version "2.5.0"}}
+                 (:deps replayed)))))
+      (let [[s2 d2] (store/record-deps-remove s1 'org.clojure/data.json
+                                              :agent "a")]
+        (testing "record-deps-remove drops the coord"
+          (is (= :deps-remove (:op d2)))
+          (is (= 'org.clojure/data.json (:lib d2)))
+          (is (= {} (:deps s2)))
+          (is (= {} (:deps (store/replay-delta s1 d2)))))))))
+
+(deftest deps-merge-across-lines
+  (testing "different libs from a diverged line land; same-lib divergence conflicts"
+    (let [base (store/ingest (store/empty-store) 'x.core "(ns x.core)\n(defn f [] 1)\n")
+          [ours _]   (store/record-deps-add base 'a/lib {:mvn/version "1.0"})
+          [theirs _] (store/record-deps-add base 'b/lib {:mvn/version "2.0"})
+          merged     (store/merge-logs ours theirs)]
+      (is (= {:mvn/version "1.0"} (get-in (:store merged) [:deps 'a/lib])))
+      (is (= {:mvn/version "2.0"} (get-in (:store merged) [:deps 'b/lib]))))))
+
+;; ---------------------------------------------------------------------------
+;; M1b: persistence (db meta materialization)
+
+(deftest db-materializes-and-reloads-deps
+  (let [dir  (temp-dir)
+        conn (db/open! dir)]
+    (try
+      ;; a non-empty store (next-id gates load-store), then stamp deps
+      (let [[s d] (store/record-deps-add
+                   (store/ingest (store/empty-store) 'x.core "(ns x.core)\n")
+                   'a/lib {:mvn/version "1.0"})]
+        (db/persist! conn s d)
+        (testing "the manifest survives persist + a fresh load-store"
+          (is (= {'a/lib {:mvn/version "1.0"}} (db/deps conn)))
+          (is (= {'a/lib {:mvn/version "1.0"}} (:deps (db/load-store conn))))))
+      (finally (.close conn)))))
+
+;; ---------------------------------------------------------------------------
+;; M1c: the api ops — reaching the live image classpath + durable round-trip
+
+(deftest deps-add-hot-loads-into-image
+  (let [sess (api/open!)]
+    (try
+      (let [pid0 (.pid ^Process (:process (:image @sess)))
+            r    (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"})]
+        (is (nil? (:error r)) (pr-str r))
+        (testing "hot-added — no restart, same image process"
+          (is (true? (:hot r)))
+          (is (= pid0 (.pid ^Process (:process (:image @sess))))))
+        (testing "the dep is on the image classpath now"
+          (is (= "{\"a\":1}"
+                 (last (api/query-eval
+                        sess (str "(require 'clojure.data.json)"
+                                  "(clojure.data.json/write-str {:a 1})"))))))
+        (testing "deps-list reflects it"
+          (is (= {:mvn/version "2.5.0"}
+                 (get (api/deps-list sess) 'org.clojure/data.json))))
+        (testing "removing restarts the image (jar can't unload)"
+          (let [rr (api/deps-remove! sess 'org.clojure/data.json)]
+            (is (true? (:restarted rr)))
+            (is (not= pid0 (.pid ^Process (:process (:image @sess)))))
+            (is (empty? (api/deps-list sess))))))
+      (finally (api/close! sess)))))
+
+(deftest deps-add-validates
+  (let [sess (api/open!)]
+    (try
+      (is (:error (api/deps-add! sess "not-a-symbol" {:mvn/version "1.0"})))
+      (is (:error (api/deps-add! sess 'a/b {})))
+      (is (:error (api/deps-remove! sess 'never/declared)))
+      (finally (api/close! sess)))))
+
+(deftest deps-durable-round-trip-and-branch-inherit
+  (let [dir (temp-dir)]
+    (let [sess (api/open! {:dir dir})]
+      (try
+        (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
+                       :agent "a")
+        (testing "a branch created after the add inherits the manifest"
+          (api/branch! sess "feature")
+          (is (= {:mvn/version "2.5.0"}
+                 (get (api/deps-list sess) 'org.clojure/data.json))))
+        (finally (api/close! sess))))
+    (testing "a fresh session over the same dir reloads deps AND its image can use them"
+      (let [sess2 (api/open! {:dir dir})]
+        (try
+          (is (= {:mvn/version "2.5.0"}
+                 (get (api/deps-list sess2) 'org.clojure/data.json)))
+          (is (= "{\"a\":1}"
+                 (last (api/query-eval
+                        sess2 (str "(require 'clojure.data.json)"
+                                   "(clojure.data.json/write-str {:a 1})")))))
+          (finally (api/close! sess2)))))))
+
+(deftest build-deps-edn-carries-manifest
+  (testing "an empty manifest is byte-identical to the pre-manifest output"
+    ;; the build! ours? byte-identity guard depends on this
+    (is (= "{:paths [\"src\"]}\n" (build/deps-edn false)))
+    (is (= "{:paths [\"src\"]}\n" (build/deps-edn false {})))
+    (is (= (build/deps-edn true) (build/deps-edn true {}))))
+  (testing "a manifest becomes the generated :deps map"
+    (let [s (build/deps-edn false {'org.clojure/data.json {:mvn/version "2.5.0"}})]
+      (is (re-find #":deps" s))
+      (is (re-find #"org\.clojure/data\.json" s))
+      (is (re-find #"2\.5\.0" s)))))
+
+(deftest deps-ride-the-mcp-surface
+  (let [sess (api/open!)]
+    (try
+      (let [call (fn [tool args]
+                   (get-in (slopp.mcp/handle
+                            sess {:id 1 :method "tools/call"
+                                  :params {:name tool :arguments args}})
+                           [:result :content 0 :text]))]
+        (testing "deps_add with a version string"
+          (is (re-find #":added"
+                       (call "deps_add" {:lib "org.clojure/data.json"
+                                         :version "2.5.0" :agent "a"}))))
+        (testing "deps_list answers over MCP"
+          (is (re-find #"data\.json" (call "deps_list" {})))))
+      (finally (api/close! sess)))))

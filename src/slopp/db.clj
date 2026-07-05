@@ -69,7 +69,10 @@
                             (some-> (:name e) str) (n/string (:node e))])))
      (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('next-id', ?)
                          ON CONFLICT(k) DO UPDATE SET v = excluded.v"
-                        (str (:next-id store))]))
+                        (str (:next-id store))])
+     (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('deps', ?)
+                         ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                        (pr-str (:deps store {}))]))
    nil))
 
 (defn data-version
@@ -111,6 +114,9 @@
         (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('next-id', ?)
                             ON CONFLICT(k) DO UPDATE SET v = excluded.v"
                            (str (:next-id store))])
+        (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('deps', ?)
+                            ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                           (pr-str (:deps store {}))])
         true))
     (catch clojure.lang.ExceptionInfo e
       (if (::head-moved (ex-data e)) false (throw e)))
@@ -144,6 +150,22 @@
   [conn line-id]
   (jdbc/execute! conn ["INSERT INTO meta (k,v) VALUES ('line-id', ?)
                         ON CONFLICT(k) DO UPDATE SET v = excluded.v" line-id]))
+
+(defn set-deps!
+  "Materialize the external-dependency manifest (`deps-map`, lib→coord) into
+  the meta row — the fast-load view of the `:deps-add`/`:deps-remove` deltas."
+  [conn deps-map]
+  (jdbc/execute! conn ["INSERT INTO meta (k,v) VALUES ('deps', ?)
+                        ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                       (pr-str (or deps-map {}))]))
+
+(defn deps
+  "The store's external-dependency manifest, read straight from meta — for
+  the git/native/launch paths that need it without opening a session."
+  [conn]
+  (or (some-> (jdbc/execute-one! conn ["SELECT v FROM meta WHERE k = 'deps'"])
+              :meta/v edn/read-string)
+      {}))
 
 (defn rendered-sources
   "{ns-sym rendered-source} straight from the element rows — the `source`
@@ -197,4 +219,5 @@
                        (jdbc/execute! conn ["SELECT * FROM deltas ORDER BY seq"]))
      :next-id    next-id
      :line-id    (:meta/v (jdbc/execute-one!
-                           conn ["SELECT v FROM meta WHERE k = 'line-id'"]))}))
+                           conn ["SELECT v FROM meta WHERE k = 'line-id'"]))
+     :deps       (deps conn)}))

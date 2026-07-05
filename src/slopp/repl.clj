@@ -21,11 +21,15 @@
             ["/opt/homebrew/bin" "/usr/local/bin" "/usr/bin"])
       "clojure"))
 
-(defn- default-cmd []
-  ;; A clean target image: just Clojure + nREPL. Target forms are eval'd IN over
-  ;; the client (no-disk model, C1) — the image needs no source on its classpath.
-  [clojure-bin "-Sdeps" "{:deps {nrepl/nrepl {:mvn/version \"1.3.1\"}}}"
-   "-M" "-m" "nrepl.cmdline"])
+(defn- default-cmd
+  "The target image launch command: Clojure + nREPL, plus the store's external
+  dependency manifest (`deps`, lib→coord) merged into `-Sdeps` so store code
+  that requires those libs compiles (trust Tier 1). nREPL is always kept."
+  ([] (default-cmd nil))
+  ([deps]
+   [clojure-bin "-Sdeps"
+    (pr-str {:deps (merge {'nrepl/nrepl {:mvn/version "1.3.1"}} deps)})
+    "-M" "-m" "nrepl.cmdline"]))
 
 (defn- temp-dir []
   (str (Files/createTempDirectory "slopp-image" (make-array FileAttribute 0))))
@@ -57,8 +61,8 @@
   "Launch a fresh owned image (with slopp.rt support loaded); returns a handle
   for eval!/restart!/stop!."
   ([] (start! {}))
-  ([{:keys [cmd dir timeout-ms] :or {timeout-ms 60000}}]
-   (let [cmd (or cmd (default-cmd))
+  ([{:keys [cmd dir timeout-ms deps] :or {timeout-ms 60000}}]
+   (let [cmd (or cmd (default-cmd deps))
          dir (or dir (temp-dir))
          pb  (doto (ProcessBuilder. ^java.util.List cmd)
                (.redirectErrorStream true)
@@ -97,6 +101,20 @@
       {:err (str/trim (str/join " " (distinct errs)))}
       {:values (->> msgs (keep :value)
                     (mapv (fn [v] (try (read-string v) (catch Exception _ v)))))})))
+
+(defn add-libs!
+  "Hot-add dependency coords (`deps-map`, lib→coord) to the RUNNING image via
+  Clojure 1.12 `clojure.repl.deps/add-libs` — no restart. Idempotent for
+  already-present coords (so it also reconciles an adopted bare spare).
+  Returns nil on success, or {:err msg} so the caller can fall back to a
+  fresh image (a jar can't be unloaded, so removes/downgrades never hot-apply)."
+  [handle deps-map]
+  (when (seq deps-map)
+    (let [r (eval-checked!
+             handle
+             (str "(do (require 'clojure.repl.deps)"
+                  " (clojure.repl.deps/add-libs '" (pr-str deps-map) "))"))]
+      (when (:err r) r))))
 
 (defn load!
   "Load `src` into the image attributed to `path` (VFS coordinates) via nREPL's

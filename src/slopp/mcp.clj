@@ -225,6 +225,22 @@
    {:name "query_git"
     :description "The git remote URL for THIS session's store, if the embedded git listener is running (durable sessions only). Hand it to `git remote add slopp <url>`, then clone/fetch/push over the regular git protocol: milestones (commit_point) are the commits, pushes import through verification, and wip/<branch> mirrors un-milestone'd live state. No external server needed."
     :inputSchema {:type "object" :properties {}}}
+   {:name "deps_add"
+    :description "Declare an external library dependency for THIS store (Tier 1). It reaches the live image's classpath immediately (hot add-libs, no restart) and the generated deps.edn, so store code can require it. lib is a symbol like \"org.clojure/data.json\"; give version (\"2.5.0\" → {:mvn/version ...}) OR a full coord map. Records a tracked :deps-add delta."
+    :inputSchema {:type "object"
+                  :properties {:lib {:type "string"}
+                               :version {:type "string"}
+                               :coord {:type "object"}
+                               :agent {:type "string"}}
+                  :required ["lib"]}}
+   {:name "deps_remove"
+    :description "Drop an external dependency from this store's manifest (restarts the image — a jar can't be unloaded)."
+    :inputSchema {:type "object"
+                  :properties {:lib {:type "string"} :agent {:type "string"}}
+                  :required ["lib"]}}
+   {:name "deps_list"
+    :description "This store's external dependency manifest: {lib coord}."
+    :inputSchema {:type "object" :properties {}}}
    {:name "test_run"
     :description "Run tests in the live image and record the result. No :ns = EVERY namespace's tests in one call (the full-project sweep). :only restricts to named tests; :fresh true restarts first for a guaranteed-faithful run."
     :inputSchema {:type "object"
@@ -307,7 +323,7 @@
   (into single-write-tools
         ["edit_delete_form" "edit_group" "edit_rename" "edit_extract"
          "edit_move" "ns_add_require" "ns_remove_require" "ingest" "ns_create"
-         "checkpoint" "commit_point"]))
+         "checkpoint" "commit_point" "deps_add" "deps_remove"]))
 
 (defn- track-hint!
   "Session-scoped usage counters → an optional one-line hint (item 3: haiku's
@@ -558,6 +574,14 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                     :force (:force a)
                                                     :target (:target a)))
       "query_commits"      (text (api/query-commits session))
+      "deps_add"           (text (api/deps-add! session (sym :lib)
+                                                (or (:coord a)
+                                                    (when (:version a)
+                                                      {:mvn/version (:version a)}))
+                                                :agent (:agent a)))
+      "deps_remove"        (text (api/deps-remove! session (sym :lib)
+                                                   :agent (:agent a)))
+      "deps_list"          (text (api/deps-list session))
       "query_git"          (text (if-let [u (:git-url @session)]
                                    {:url u
                                     :remote (str "git remote add slopp " u)

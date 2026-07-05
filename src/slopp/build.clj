@@ -42,17 +42,29 @@
        "  (shutdown-agents))\n"))
 
 (defn deps-edn
-  "deps.edn for the built project; with `native?`, adds the :native alias
-  (AOT output path, graal-build-time, direct linking)."
-  [native?]
-  (if-not native?
-    "{:paths [\"src\"]}\n"
-    (str "{:paths [\"src\"]\n"
-         " :aliases\n"
-         " {:native\n"
-         "  {:extra-paths [\"classes\"]\n"
-         "   :extra-deps  {com.github.clj-easy/graal-build-time {:mvn/version \"1.0.5\"}}\n"
-         "   :jvm-opts    [\"-Dclojure.compiler.direct-linking=true\"]}}}\n")))
+  "deps.edn for the built project; `deps` (lib→coord, the store's Tier-1
+  manifest) becomes the `:deps` map so a built project is runnable; with
+  `native?`, adds the :native alias (AOT output path, graal-build-time, direct
+  linking) — manifest deps flow to the native classpath via `-Spath -A:native`.
+  With an EMPTY manifest the output is byte-identical to the pre-manifest
+  version (the build! `ours?` byte-identity guard relies on this)."
+  ([native?] (deps-edn native? {}))
+  ([native? deps]
+   ;; bind *print-namespace-maps* OFF: it defaults true at a REPL, false in a
+   ;; script — leaving it would make output non-deterministic (the git
+   ;; projection + build! ours? guard both depend on byte-stable output).
+   (let [deps-str (if (seq deps)
+                    (str " :deps " (binding [*print-namespace-maps* false]
+                                     (pr-str deps)))
+                    "")]
+     (if-not native?
+       (str "{:paths [\"src\"]" deps-str "}\n")
+       (str "{:paths [\"src\"]" deps-str "\n"
+            " :aliases\n"
+            " {:native\n"
+            "  {:extra-paths [\"classes\"]\n"
+            "   :extra-deps  {com.github.clj-easy/graal-build-time {:mvn/version \"1.0.5\"}}\n"
+            "   :jvm-opts    [\"-Dclojure.compiler.direct-linking=true\"]}}}\n")))))
 
 (defn native-script
   "build-native.sh: AOT-compile the launcher (and, transitively, the app),

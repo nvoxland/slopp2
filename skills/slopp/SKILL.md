@@ -178,7 +178,8 @@ ns_add_require ns_remove_require · edit_add_form edit_replace_form
 edit_delete_form edit_subform edit_group edit_rename edit_extract
 edit_extract_ns edit_move edit_revert episode_revert ns_rename
 fix_declares · branch_create branch_switch branch_merge branch_delete
-merge_from · test_run checkpoint commit_point query_commits query_git
+merge_from · deps_add deps_remove deps_list · test_run checkpoint commit_point
+query_commits query_git
 restart build help
 
 ## Shipping

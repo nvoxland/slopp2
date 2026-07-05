@@ -122,10 +122,11 @@
 
 (defn- commit-paths
   "{path content} for a milestone's tree: every namespace under src/ (same
-  layout as build!) plus the generated deps.edn, so a clone is runnable."
-  [tree-map]
+  layout as build!) plus the generated deps.edn (carrying the store's Tier-1
+  manifest `deps`, so a clone is runnable)."
+  [tree-map deps]
   (into (sorted-map)
-        (cons ["deps.edn" (build/deps-edn false)]
+        (cons ["deps.edn" (build/deps-edn false deps)]
               (map (fn [[ns-sym src]]
                      [(str "src/" (render/ns-path ns-sym)) src])
                    tree-map))))
@@ -214,7 +215,7 @@
   projection rebuildable."
   [^Repository repo parent-sha d tree-map]
   (with-open [ins (.newObjectInserter repo)]
-    (let [tree-id (insert-tree! ins (commit-paths tree-map))
+    (let [tree-id (insert-tree! ins (commit-paths tree-map (:deps d)))
           at      (Instant/ofEpochMilli (long (:at d)))
           who     (str (or (:agent d) "slopp"))
             ;; reflection-free ctors matter: reflective JGit calls resolve
@@ -272,7 +273,8 @@
       (delete-ref! repo ref-name)          ; no milestone = no baseline
       (with-open [ins (.newObjectInserter repo)]
         (let [tree-id (insert-tree! ins (commit-paths
-                                         (db/rendered-sources conn)))
+                                         (db/rendered-sources conn)
+                                         (db/deps conn)))
               tip     (ObjectId/fromString tip-sha)
               m-tree  (with-open [rw (RevWalk. repo)]
                         (.getId (.getTree (.parseCommit rw tip))))]
