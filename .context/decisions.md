@@ -421,6 +421,18 @@ the change here (same commit).
     source and runs `render/ns-path` in the self-hosted image; an `^:unsafe`
     def holding the banned symbols (slopp.edit `banned-syms` shape) ingests
     cleanly.
+    - **M2 follow-up (import-gate fix, 2026-07, self-host dogfooding):** M2 made
+      `dialect-check` early-return on `^:unsafe`, but the IMPORT path
+      (`ingest!`) never called it — only the edit path did. So a host form could
+      be imported UNMARKED and then be **frozen** (the edit path rejects its own
+      body's denylisted symbol on any later edit), and import silently swallowed
+      `!`-warnings. Fixed: `edit/dialect-scan` runs `dialect-check` over every
+      ingested form BEFORE the image load; a host form must enter already
+      `^:unsafe` or the whole ingest is rejected (nothing commits, image
+      untouched). `ingest!` now also returns `:warnings`. Both paths share one
+      gate; the store is internally consistent (any in-store host form is
+      `^:unsafe`, hence editable). Found by dogfooding `slopp.rt` import; log in
+      `ideas/self-host-log.md`.
   - **M4 shipped:** `slopp.deps` — a dep's own jars (classpath diff) →
     clj-kondo API surface (namespaces + var arities/docs/macro flags),
     memoized per `coord@version` (process memo + durable `dep_surface`

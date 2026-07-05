@@ -289,34 +289,40 @@
                  " (whole-namespace overwrite is not allowed)")}
     (try
       (let [base      (:store @session)
-            candidate (store/ingest base ns-sym source :agent agent)
-            res (repl/load-checked! (:image @session)
-                                    (render/render-ns candidate ns-sym)
-                                    (render/ns-path ns-sym))]
-        (cond
-          (:err res)
-          {:error (str "namespace failed to load: " (:err res))}
+            candidate (store/ingest base ns-sym source :agent agent)]
+        (if-let [derr (edit/dialect-scan candidate ns-sym)]
+          ;; same D3/D4 gate the edit path enforces — a host form can only enter
+          ;; the store already ^:unsafe, so imported code is never frozen and the
+          ;; image is never touched by a rejected namespace.
+          {:error derr}
+          (let [res (repl/load-checked! (:image @session)
+                                        (render/render-ns candidate ns-sym)
+                                        (render/ns-path ns-sym))]
+            (cond
+              (:err res)
+              {:error (str "namespace failed to load: " (:err res))}
 
-          (not (try-commit! session base candidate [ns-sym]))
-          {:conflict {:reason "store changed during ingest — retry"}}
+              (not (try-commit! session base candidate [ns-sym]))
+              {:conflict {:reason "store changed during ingest — retry"}}
 
-          :else
-          (do
-            (repl/eval! (:image @session)
-                        (format "(dosync (commute (deref #'clojure.core/*loaded-libs*) conj '%s))"
-                                ns-sym))
-            (let [edited  (into #{}
-                                (keep (fn [e]
-                                        (when (:name e)
-                                          (symbol (str ns-sym) (str (:name e))))))
-                                (store/forms candidate ns-sym))
-                  summary (run-verification! session ns-sym nil :edited edited)]
-              (commit-appended! session
-                                #(store/record-verification % ns-sym summary)
-                                [])
-              {:ns ns-sym
-               :forms (count (store/forms candidate ns-sym))
-               :test summary}))))
+              :else
+              (do
+                (repl/eval! (:image @session)
+                            (format "(dosync (commute (deref #'clojure.core/*loaded-libs*) conj '%s))"
+                                    ns-sym))
+                (let [edited  (into #{}
+                                    (keep (fn [e]
+                                            (when (:name e)
+                                              (symbol (str ns-sym) (str (:name e))))))
+                                    (store/forms candidate ns-sym))
+                      summary (run-verification! session ns-sym nil :edited edited)]
+                  (commit-appended! session
+                                    #(store/record-verification % ns-sym summary)
+                                    [])
+                  {:ns ns-sym
+                   :forms (count (store/forms candidate ns-sym))
+                   :warnings (edit/ns-warnings candidate ns-sym)
+                   :test summary}))))))
       (catch Exception e
         {:error (str "unparseable source (unbalanced?): " (ex-message e))}))))
 

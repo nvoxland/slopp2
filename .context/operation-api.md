@@ -80,9 +80,13 @@ is what catches a missing one.
   behavior); `:source` (the whole namespace text) lands it in one verified call
   (ported/reference/data code). Threads `:agent` for provenance.
 - `ingest!` — the shared engine `create-ns!` delegates to: load a whole
-  namespace from source; returns `{:ns :forms}` or `{:error}` (never throws on
-  bad source). Internal only — NOT its own tool (folded into `ns_create`); also
-  the load path for git-import and seeds.
+  namespace from source. Runs the D3/D4 dialect gate over every form first (via
+  `edit/dialect-scan`, the same check the edit path applies) — a host form must
+  already be `^:unsafe` or the whole ingest is rejected before the image is
+  touched, so imported code is never frozen. Returns `{:ns :forms :warnings
+  :test}` (the `:warnings` are the `!`-effect warnings it used to swallow) or
+  `{:error}` (never throws on bad source). Internal only — NOT its own tool
+  (folded into `ns_create`); also the load path for git-import and seeds.
 - `add-require!` — structural, dup-checked require addition through the replace
   pipeline. Prefer these over hand-ingesting/replacing ns forms.
 - `edit-replace!` — whole-form replace (O1); the common "semantic patch" path.

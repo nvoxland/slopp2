@@ -29,10 +29,12 @@
   [node]
   (boolean (:unsafe (meta (n/sexpr node)))))
 
-(defn- dialect-check
+(defn dialect-check
   "nil if the form is admissible; an error string otherwise (D3/D4). An
   `^:unsafe` form is admissible by assertion — the author takes on the
-  obligation the analyzer can't discharge (it stays greppable via `unsafe?`)."
+  obligation the analyzer can't discharge (it stays greppable via `unsafe?`).
+  Shared by the single-form edit gate (`parse-form`) and the whole-namespace
+  import gate (`dialect-scan`) so both paths reject identically."
   [node]
   (if (unsafe? node)
     nil
@@ -114,6 +116,21 @@
   (let [dep-nses (into #{} (mapcat identity) (vals (:dep-ns store)))]
     (index/effect-violations (index/analyze (render/render-ns store ns-sym))
                              dep-nses (:dep-pure store))))
+
+(defn dialect-scan
+  "Run the D3/D4 dialect gate (the SAME check `parse-form` applies per form) over
+  every form of `ns-sym` already in `store`. The import path parses a whole
+  namespace at once, so it can't gate through `parse-form` — this closes the
+  hole. Returns the first violation as an error string naming the form, or nil
+  if all are admissible. `^:unsafe` forms pass exactly as on the edit path: a
+  host form can only ENTER the store already marked, so it is never frozen
+  (un-editable) against a later edit of its own body."
+  [store ns-sym]
+  (some (fn [e]
+          (when-let [err (dialect-check (:node e))]
+            (str "form " (or (:name e) "?") ": " err
+                 " — mark the form ^:unsafe if this boundary code is intentional")))
+        (store/forms store ns-sym)))
 
 (defn replace-form
   "Pure edit: validate `new-source` (one dialect-legal form) and replace the form

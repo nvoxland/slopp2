@@ -76,6 +76,35 @@
       (is (= [2] (api/query-eval sess "(us.chk/q 1)")))
       (finally (api/close! sess)))))
 
+(deftest import-path-gates-dialect-like-edit
+  ;; the import path (ingest! / ns_create {:source}) must run the SAME dialect
+  ;; gate the edit path does. Otherwise host forms enter the store UNMARKED and
+  ;; become frozen — the edit path later refuses to modify them (their own body
+  ;; contains a denylisted symbol) — and import silently swallows the warnings
+  ;; the edit path surfaces. (Self-host dogfooding, 2026-07.)
+  (let [sess (api/open!)]
+    (try
+      (testing "an un-^:unsafe host form is REJECTED on import (nothing commits)"
+        (let [r (api/ingest! sess 'ig.bad
+                             "(ns ig.bad)\n(defn f [a] (alter-var-root a (constantly 1)))\n")]
+          (is (:error r))
+          (is (re-find #"unsafe" (str (:error r))))
+          (is (nil? (get-in (:store @sess) [:namespaces 'ig.bad]))
+              "the rejected namespace must not have committed")))
+      (testing "the same form marked ^:unsafe imports cleanly (never frozen)"
+        (let [r (api/ingest! sess 'ig.ok
+                             "(ns ig.ok)\n^:unsafe\n(defn f [a] (alter-var-root a (constantly 1)))\n")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= 2 (:forms r)))))
+      (testing "import now RETURNS the !-warnings it used to swallow"
+        (let [r (api/ingest! sess 'ig.warn
+                             "(ns ig.warn)\n(def s (atom 0))\n(defn bump [] (swap! s inc))\n")]
+          (is (contains? r :warnings))
+          (is (some #(re-find #"bump" (str %)) (:warnings r))
+              (str "expected a !-naming warning for the swap!-ing fn: "
+                   (pr-str (:warnings r))))))
+      (finally (api/close! sess)))))
+
 (deftest unsafe-does-not-relax-effect-warnings
   ;; ^:unsafe opts out of the DIALECT ban only — honest !-labeling is orthogonal
   (let [sess (api/open!)]

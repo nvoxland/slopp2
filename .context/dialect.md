@@ -2,12 +2,22 @@
 
 ## The gate (`slopp.edit`)
 
-Every write passes `parse-form`: exactly ONE top-level form, then the
-dialect check —
+Every write passes the same dialect check (`edit/dialect-check`), by BOTH
+entry paths — the single-form edit path via `parse-form` (exactly ONE top-level
+form) and the whole-namespace import path (`ingest!`/`ns_create {:source}`) via
+`edit/dialect-scan`, which runs it over every form of the ingested namespace.
+The check —
 - **D4:** `defmacro` rejected ("user macros are banned").
 - **D3 denylist** (analysis defeaters): `eval`, `alter-var-root`, `binding`,
   `gen-class`, `definline`, `read-string`. Extensible — the list is a sample,
   grow it deliberately (and record here).
+
+Import is gated identically to edit (fixed 2026-07 via self-host dogfooding):
+before this, `ingest!` skipped the gate, so a host form could enter the store
+UNMARKED and then be **frozen** — the edit path would refuse to modify its own
+body (it contains a denylisted symbol). Now a host form can only enter already
+`^:unsafe`, so imported code is never frozen. `ingest!` also returns its
+`!`-warnings now (it used to swallow them).
 
 Philosophy: keep **data dynamism** (open maps, loose args — the advantage the
 live oracle makes safe); constrain **metaprogramming dynamism** (what defeats

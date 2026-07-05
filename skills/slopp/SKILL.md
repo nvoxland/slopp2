@@ -76,7 +76,7 @@ Server: `clojure -M -m slopp.mcp` (stdio) from the slopp repo.
 | Situation | Tool |
 |---|---|
 | New namespace, build it up with TDD | `ns_create {ns, requires}` — scaffolds an empty ns; grow it form-by-form (create dependency nses FIRST — a require of a not-yet-created ns fails). The default for new *behavior* |
-| New namespace, whole source ready | `ns_create {ns, source}` — lands the entire namespace in ONE verified call (ported/reference/data code not subject to red→green; new namespaces only, never overwrites) |
+| New namespace, whole source ready | `ns_create {ns, source}` — lands the entire namespace in ONE verified call (ported/reference/data code not subject to red→green; new namespaces only, never overwrites). Gated like an edit: any host form (`binding`/`alter-var-root`/…) must be `^:unsafe` in the source or the whole import is rejected |
 | New/removed require | `ns_add_require` / `ns_remove_require` (never hand-edit the ns form) |
 | New function/test | `edit_add_form` (one form per call) |
 | Change a function | `edit_replace_form` (submit the whole new form) |
