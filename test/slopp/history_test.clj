@@ -156,3 +156,55 @@
         (is (str/includes? (call {:ns "hi.core" :name "f" :at (:commit v1)})
                            "(+ x 1)")))
       (finally (api/close! sess)))))
+
+;; ---------------------------------------------------------------------------
+;; HM3: delta-log search ("which prompts touched X")
+
+(deftest search-history-finds-prompts-intents-and-descriptions
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'hi.core seed)
+      (api/edit-replace! sess 'hi.core 'f "(defn f [x] (+ x 3))"
+                         :prompt "add auth bounds check" :agent "a")
+      (api/edit-replace! sess 'hi.core 'g "(defn g [x] (* x 3))"
+                         :prompt "unrelated tweak" :agent "a")
+      (testing "a prompt match returns the delta AND the forms it touched"
+        (let [r (api/query-search-history sess "auth")]
+          (is (= 1 (count r)))
+          (is (= "add auth bounds check" (:prompt (first r))))
+          (is (some #{'hi.core/f} (:forms (first r))))
+          (is (some? (:at (first r))))))
+      (testing "matching is case-insensitive"
+        (is (= 1 (count (api/query-search-history sess "AUTH")))))
+      (testing "a turn INTENT match catches deltas whose own prompt is silent"
+        (api/turn-begin! sess :agent "b" :intent "wire up the login flow")
+        (api/edit-replace! sess 'hi.core 'g "(defn g [x] (* x 5))"
+                           :prompt "tweak again" :agent "b")
+        (api/turn-end! sess :agent "b")
+        (let [r (api/query-search-history sess "login")]
+          (is (seq r))
+          (is (every? #(= "wire up the login flow" (:turn-intent %)) r))))
+      (testing "a commit-point DESCRIPTION is searchable"
+        ;; :force — the earlier edits left f-t red; we only care that the
+        ;; :commit marker (with its description) lands and is searchable
+        (api/commit-point! sess "auth milestone shipped" :agent "a" :force true)
+        (is (some #(= "auth milestone shipped" (:description %))
+                  (api/query-search-history sess "milestone"))))
+      (testing "a blank pattern is refused; limit is respected"
+        (is (:error (api/query-search-history sess "  ")))
+        (is (<= (count (api/query-search-history sess "x" :limit 1)) 1)))
+      (finally (api/close! sess)))))
+
+(deftest search-history-rides-the-mcp-surface
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'hi.core seed)
+      (api/edit-replace! sess 'hi.core 'f "(defn f [x] (+ x 9))"
+                         :prompt "harden auth path" :agent "a")
+      (let [r (get-in (slopp.mcp/handle
+                       sess {:id 1 :method "tools/call"
+                             :params {:name "query_search_history"
+                                      :arguments {:contains "auth"}}})
+                      [:result :content 0 :text])]
+        (is (str/includes? r "harden auth path")))
+      (finally (api/close! sess)))))

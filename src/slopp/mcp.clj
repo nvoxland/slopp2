@@ -102,6 +102,12 @@
     :inputSchema {:type "object"
                   :properties {:at {:type "string"}}
                   :required ["at"]}}
+   {:name "query_search_history"
+    :description "DELTA-LOG SEARCH ('which prompts touched auth?'): case-insensitive substring match of :contains against every delta's prompt, checkpoint label, commit/turn description, and enclosing turn intent, newest-first. Each hit carries the forms it touched (ns/name) + human time — drill in with query_form_at / query_lineage."
+    :inputSchema {:type "object"
+                  :properties {:contains {:type "string"}
+                               :limit {:type "integer"}}
+                  :required ["contains"]}}
    {:name "query_eval"
     :description "Read-only eval against the live image (the oracle); never edits code."
     :inputSchema {:type "object" :properties {:code {:type "string"}} :required ["code"]}}
@@ -459,6 +465,8 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
       "query_form_at"     (text (api/query-form-at session (sym :ns) (sym :name)
                                                    :at (:at a)))
       "query_status_at"   (text (api/query-status-at session :at (:at a)))
+      "query_search_history" (text (api/query-search-history session (:contains a)
+                                                             :limit (:limit a)))
       "query_eval"        (text (api/query-eval session (:code a)))
       "query_observe"     (text (api/query-observe session (sym :ns) (sym :name)
                                                    (:code a)

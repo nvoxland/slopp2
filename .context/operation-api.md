@@ -53,7 +53,15 @@ verified history:
   green", the first verify AT OR AFTER the delta), not `status-at`'s
   standing-at-a-point reading. Two genuinely different questions; keep them
   distinct.
-- (HM3+) delta-log search, per-form diff timelines — land next.
+- `query-search-history {pattern :limit}` — **DELTA-LOG SEARCH** ("which
+  prompts touched auth?"): case-insensitive substring over each delta's
+  prompt, checkpoint label, commit/turn description, turn-end note, AND its
+  enclosing turn intent (`turn-intents`), newest-first. Each hit carries the
+  forms it touched (ns/name qsyms, names resolved as of that delta) + `:at`
+  — drill in with `query-form-at`/`query-lineage`. Distinct from
+  `query-history :contains` (that's episode/turn rows; this is log-wide,
+  form-addressed, intent-aware).
+- (HM4) per-form diff timelines — land next.
 
 ## Write surface (each = tracked delta(s) + hot-reload + verification + provenance)
 

@@ -28,7 +28,8 @@
 (declare run-verification! forms-changed-since query-outline
          hot-load-all! fresh-image! reap-idle-images!
          content-ops delta-fids episode-boundary episode-span
-         query-changes edit-group! fix-declares! status-at status-after)
+         query-changes edit-group! fix-declares! status-at status-after
+         human-time)
 
 (defn- start-spare!
   "Kick off a background-warming spare image (D5 warm spare) if enabled."
@@ -405,6 +406,46 @@
                (cond-> {:delta (:id d) :op (:op d) :prompt (:prompt d)
                         :source src :status (status-after st (:id d))}
                  (ti (:id d)) (assoc :turn-intent (ti (:id d))))))))))
+
+(defn query-search-history
+  "Delta-log search — the 'which prompts touched X' query. Case-insensitive
+  substring match of `pattern` against each delta's prompt, checkpoint label,
+  commit/turn description, turn-end note, AND its enclosing turn intent;
+  returns the matching deltas NEWEST-first with the forms they touched (as
+  ns/name qsyms, resolved as of that delta) and the human time. `:limit`
+  (default 25). Pairs with `query-form-at`/`query-lineage` to drill in."
+  [session pattern & {:keys [limit] :or {limit 25}}]
+  (if (str/blank? (str pattern))
+    {:error "query-search-history needs a non-blank pattern"}
+    (let [st  (:store @session)
+          ds  (store/deltas st)
+          ti  (turn-intents ds)
+          pat (str/lower-case (str pattern))
+          hit? (fn [d]
+                 (some #(and % (str/includes? (str/lower-case (str %)) pat))
+                       [(:prompt d) (:label d) (:description d) (:note d)
+                        (ti (:id d))]))
+          form-name (fn [d fid]
+                      (or (some-> (get-in d [:sources fid]) store/name-of-source str)
+                          (some-> (store/form-by-id st fid) :name str)
+                          (when (= fid (:form-id d)) (some-> (:name d) str))
+                          (str fid)))
+          touched (fn [d]
+                    (vec (for [fid (delta-fids d)]
+                           (symbol (str (or (store/ns-of-form-id st fid) (:ns d)))
+                                   (form-name d fid)))))]
+      (->> ds
+           reverse
+           (filter hit?)
+           (take (or limit 25))
+           (mapv (fn [d]
+                   (cond-> {:delta (:id d) :op (:op d) :at (human-time (:at d))}
+                     (:prompt d)      (assoc :prompt (:prompt d))
+                     (:label d)       (assoc :label (:label d))
+                     (:description d) (assoc :description (:description d))
+                     (:note d)        (assoc :note (:note d))
+                     (ti (:id d))     (assoc :turn-intent (ti (:id d)))
+                     (seq (delta-fids d)) (assoc :forms (touched d)))))))))
 
 (defn- human-time
   "Epoch ms → \"2026-07-04 09:15\" in the local zone (the human rendering of
