@@ -59,8 +59,10 @@
 - **External dependency manifest (P4-deps):** `:deps-add`/`:deps-remove` are
   STATE-carrying deltas (not pure markers) — `replay-delta` assoc/dissoc's
   `(:deps store)` (lib→coord) so foreign-sync reconstructs the manifest
-  incrementally; `merge-logs` lands foreign deps and surfaces same-lib
-  version divergence as a conflict note. The current manifest is materialized
+  incrementally; `merge-logs` lands foreign deps and, on same-lib version
+  divergence, auto-resolves to the NEWER coord (numeric compare via
+  `slopp.semver/newer?`) with a resolution `:note` — only truly incomparable
+  coords (mvn vs git sha, etc.) stay a `:conflict`. The current manifest is materialized
   to a `meta` row `'deps'` (written by `persist!`/`append!` from
   `(:deps store)`, read by `load-store` into `:deps`) so launch/git/native
   read it O(1) without replaying — `db/deps [conn]` is the session-free read.

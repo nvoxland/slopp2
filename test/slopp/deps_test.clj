@@ -53,6 +53,31 @@
       (is (= {:mvn/version "1.0"} (get-in (:store merged) [:deps 'a/lib])))
       (is (= {:mvn/version "2.0"} (get-in (:store merged) [:deps 'b/lib]))))))
 
+(deftest deps-merge-resolves-version-divergence-to-newer
+  ;; same lib pinned to diverging mvn versions auto-resolves to the NEWER
+  ;; (numeric, via slopp.semver) with a note — not left as a conflict.
+  (let [base (store/ingest (store/empty-store) 'x.core "(ns x.core)\n")]
+    (testing "theirs is newer → adopt theirs, note, no conflict"
+      (let [[ours _]   (store/record-deps-add base 'a/lib {:mvn/version "1.2.0"})
+            [theirs _] (store/record-deps-add base 'a/lib {:mvn/version "1.10.0"})
+            m (store/merge-logs ours theirs)]
+        (is (= {:mvn/version "1.10.0"} (get-in (:store m) [:deps 'a/lib])))
+        (is (empty? (:conflicts m)))
+        (is (some #(and (= :deps (:resolved %)) (= {:mvn/version "1.10.0"} (:kept %)))
+                  (:notes m)))))
+    (testing "ours is newer → keep ours (still no conflict)"
+      (let [[ours _]   (store/record-deps-add base 'a/lib {:mvn/version "1.10.0"})
+            [theirs _] (store/record-deps-add base 'a/lib {:mvn/version "1.2.0"})
+            m (store/merge-logs ours theirs)]
+        (is (= {:mvn/version "1.10.0"} (get-in (:store m) [:deps 'a/lib])))
+        (is (empty? (:conflicts m)))))
+    (testing "incomparable coords (mvn vs git) remain a real conflict, ours kept"
+      (let [[ours _]   (store/record-deps-add base 'a/lib {:mvn/version "1.2.0"})
+            [theirs _] (store/record-deps-add base 'a/lib {:git/sha "abc123"})
+            m (store/merge-logs ours theirs)]
+        (is (seq (:conflicts m)))
+        (is (= {:mvn/version "1.2.0"} (get-in (:store m) [:deps 'a/lib])))))))
+
 ;; ---------------------------------------------------------------------------
 ;; M1b: persistence (db meta materialization)
 

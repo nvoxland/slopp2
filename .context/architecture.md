@@ -62,6 +62,7 @@
 | `slopp.turn` | one-shot CLI for Claude Code hooks: verbatim-prompt turn markers appended out-of-band |
 | `slopp.build` | explicit build: files + GraalVM native-image recipe (O4) |
 | `slopp.deps` | P4-deps: external-dependency ANALYSIS — resolve a dep's own jars (classpath diff) and extract its API surface (provided namespaces + var arities/docs/macro flags) via clj-kondo, content-addressed by `coord@version` |
+| `slopp.semver` | tiny mvn-version parse + numeric compare (`newer?`); used by `merge-logs` to auto-resolve deps version divergence to the newer coord |
 | `slopp.git` | P4-m8 git compatibility: projects `:commit` milestones into a bare repo at `.slopp/git` (deterministic shas, `git_map` pinning); the git-protocol server rides on top |
 | `slopp.bench` / `slopp.benchmark` | metrics / scripted sample-app benchmark |
 

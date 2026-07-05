@@ -27,7 +27,10 @@ it.
   is `{lib coord}` (deps.edn coordinates), kept CLEAN (tools.deps-legal).
 - It is a **tracked delta stream** (`:deps-add`/`:deps-remove`, state-carrying
   — they reconstruct `:deps` on foreign-sync, ride branches/merge), materialized
-  to a `meta` `'deps'` row for O(1) load. `:deps` is on the store VALUE.
+  to a `meta` `'deps'` row for O(1) load. `:deps` is on the store VALUE. On
+  merge, a same-lib **version divergence auto-resolves to the newer mvn coord**
+  (numeric compare via `slopp.semver/newer?`, so 1.10 > 1.2) with a resolution
+  note; only incomparable coords (mvn vs git sha) stay a conflict.
 - **Reaches the image classpath** at every launch (`-Sdeps` in
   `repl/default-cmd`; `image-with-deps!` reconciles the bare warm-spare). A
   new coord **hot-loads with no restart** (`repl/add-libs!`, Clojure 1.12);

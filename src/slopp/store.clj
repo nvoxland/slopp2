@@ -12,7 +12,8 @@
   needs globally-unique ids (uuid / lamport)."
   (:require [clojure.string :as str]
             [rewrite-clj.parser :as p]
-            [rewrite-clj.node :as n]))
+            [rewrite-clj.node :as n]
+            [slopp.semver :as semver]))
 
 (defn empty-store []
   ;; :dep-ns   lib → #{namespaces the dep provides} (M4 surface, for M3's
@@ -622,19 +623,36 @@
                   (done st idmap merged conflicts notes changed new-nses applied)
 
                   :deps-add
-                  ;; a foreign dep declaration: land it, unless the same lib is
-                  ;; pinned to a DIFFERENT coord on our side (version divergence)
-                  (let [lib (:lib d) cur (get-in st [:deps lib])]
-                    (if (and cur (not= cur (:coord d)))
+                  ;; a foreign dep declaration. No divergence (new lib or same
+                  ;; coord) → land it. Divergence of two mvn versions → auto-
+                  ;; resolve to the NEWER (numeric, via slopp.semver) with a note.
+                  ;; Diverging incomparable coords (git sha, mixed) → a conflict.
+                  (let [lib (:lib d) cur (get-in st [:deps lib]) theirs (:coord d)
+                        land (fn [st*]
+                               (-> st* (assoc-in [:deps lib] theirs)
+                                   (assoc-in [:dep-ns lib] (set (:namespaces d)))))]
+                    (cond
+                      (or (nil? cur) (= cur theirs))
+                      (done (land st) idmap (inc merged) conflicts notes changed
+                            new-nses (conj applied (:id d)))
+
+                      (and (:mvn/version cur) (:mvn/version theirs))
+                      (let [theirs-newer? (semver/newer? (:mvn/version theirs)
+                                                         (:mvn/version cur))]
+                        (done (if theirs-newer? (land st) st)
+                              idmap (inc merged) conflicts
+                              (conj notes {:resolved :deps :lib lib
+                                           :kept    (if theirs-newer? theirs cur)
+                                           :dropped (if theirs-newer? cur theirs)
+                                           :reason "version divergence auto-resolved to newer"})
+                              changed new-nses (conj applied (:id d))))
+
+                      :else
                       (done st idmap merged
-                            (conj conflicts {:dep lib :ours cur :theirs (:coord d)})
+                            (conj conflicts {:dep lib :ours cur :theirs theirs})
                             (conj notes {:conflict :deps :lib lib
-                                         :reason "same dependency pinned to different coords"})
-                            changed new-nses (conj applied (:id d)))
-                      (done (-> st (assoc-in [:deps lib] (:coord d))
-                                (assoc-in [:dep-ns lib] (set (:namespaces d))))
-                            idmap (inc merged) conflicts notes changed new-nses
-                            (conj applied (:id d)))))
+                                         :reason "same dependency pinned to incomparable coords"})
+                            changed new-nses (conj applied (:id d)))))
 
                   :deps-remove
                   (done (-> st (update :deps dissoc (:lib d))
