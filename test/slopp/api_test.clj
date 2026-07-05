@@ -4,6 +4,30 @@
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
+(deftest create-ns-modes
+  (let [sess (api/open!)]
+    (try
+      (testing ":source lands a whole namespace in one verified call (folded-in ingest)"
+        (let [r (api/create-ns! sess 'cn.core
+                                :source "(ns cn.core)\n(defn f [x] (* 2 x))\n(defn g [x] (+ 1 x))\n"
+                                :agent "alice")]
+          (is (nil? (:error r)))
+          (is (= 3 (:forms r)))
+          (is (re-find #"defn f" (api/query-source sess 'cn.core)))
+          (is (= [10] (api/query-eval sess "(cn.core/f 5)")))))
+      (testing ":source carries provenance via :agent"
+        (is (some #(= "alice" (:agent %))
+                  (api/query-lineage sess 'cn.core 'f))))
+      (testing ":requires still scaffolds an empty namespace"
+        (let [r (api/create-ns! sess 'cn.util :requires ["[clojure.string :as str]"])]
+          (is (nil? (:error r)))
+          (is (re-find #"clojure.string" (api/query-source sess 'cn.util)))))
+      (testing ":source and :requires are mutually exclusive"
+        (is (:error (api/create-ns! sess 'cn.bad
+                                    :source "(ns cn.bad)\n"
+                                    :requires ["[clojure.string]"]))))
+      (finally (api/close! sess)))))
+
 (deftest operation-surface
   (let [sess (api/open!)]
     (try

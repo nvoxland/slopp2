@@ -321,16 +321,30 @@
         {:error (str "unparseable source (unbalanced?): " (ex-message e))}))))
 
 (defn create-ns!
-  "F4: create a brand-new namespace, optionally with `:requires` (clause
-  strings like \"[clojure.string :as str]\")."
-  [session ns-sym & {:keys [requires]}]
-  (if (get-in (:store @session) [:namespaces ns-sym])
-    {:error (str ns-sym " already exists")}
+  "F4: bring a brand-new namespace into being — two modes (mutually exclusive):
+   - **scaffold** (`:requires`, clause strings like \"[clojure.string :as str]\"):
+     build an empty `(ns …)` to grow form-by-form with red-first TDD. The default.
+   - **content** (`:source`, the whole namespace text incl. its own `(ns …)`):
+     land the entire namespace in one verified call — forward refs within the
+     file resolve as a unit, like a real `.clj` load. For ported/reference/data
+     code that isn't subject to red→green.
+   Delegates to `ingest!` (the shared engine); overwrite is refused there."
+  [session ns-sym & {:keys [requires source agent]}]
+  (cond
+    (and source (seq requires))
+    {:error (str ":source and :requires are mutually exclusive — put requires "
+                 "inside the source's ns form")}
+
+    source
+    (ingest! session ns-sym source :agent agent)
+
+    :else
     (ingest! session ns-sym
              (str "(ns " ns-sym
                   (when (seq requires)
                     (str "\n  (:require " (str/join "\n            " requires) ")"))
-                  ")\n"))))
+                  ")\n")
+             :agent agent)))
 
 ;; --- query.* (read) ---
 

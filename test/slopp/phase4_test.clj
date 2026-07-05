@@ -41,7 +41,7 @@
                     (get-in tools [:body :result :tools])))))
       (testing "tool calls work end-to-end through /mcp"
         (is (re-find #":forms 2"
-                     (tool! port "alice" "ingest"
+                     (tool! port "alice" "ns_create"
                             {:ns "m1.core"
                              :source "(ns m1.core)\n(defn f [x] (* 2 x))\n"})))
         (is (re-find #"\b10\b" (tool! port "alice" "query_eval"
@@ -52,7 +52,7 @@
   (let [port 7412
         srv  (http/start-server! port {})]
     (try
-      (tool! port "alice" "ingest"
+      (tool! port "alice" "ns_create"
              {:ns "team.core"
               :source "(ns team.core)\n(defn a [x] x)\n(defn b [x] x)\n"})
       (testing "concurrent different-form writes from two agents both land"

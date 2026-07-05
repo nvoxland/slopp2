@@ -74,11 +74,17 @@ is what catches a missing one.
 
 ## Write surface (each = tracked delta(s) + hot-reload + verification + provenance)
 
-- `ingest!` — load a whole namespace from source; returns `{:ns :forms}` or
-  `{:error}` (never throws on bad source).
-- `create-ns!` — first-class new-namespace op (optional `:requires` clause
-  strings); `add-require!` — structural, dup-checked require addition through
-  the replace pipeline. Prefer these over hand-ingesting/replacing ns forms.
+- `create-ns!` — the public new-namespace op and the ONLY creation tool
+  (`ns_create`). TWO mutually-exclusive modes: `:requires` (clause strings)
+  scaffolds an empty ns to grow form-by-form with TDD (the default for new
+  behavior); `:source` (the whole namespace text) lands it in one verified call
+  (ported/reference/data code). Threads `:agent` for provenance.
+- `ingest!` — the shared engine `create-ns!` delegates to: load a whole
+  namespace from source; returns `{:ns :forms}` or `{:error}` (never throws on
+  bad source). Internal only — NOT its own tool (folded into `ns_create`); also
+  the load path for git-import and seeds.
+- `add-require!` — structural, dup-checked require addition through the replace
+  pipeline. Prefer these over hand-ingesting/replacing ns forms.
 - `edit-replace!` — whole-form replace (O1); the common "semantic patch" path.
 - `add-form!` / `delete-form!` — grow/shrink a namespace (delete `ns-unmap`s).
 - `rename!` — coordinated multi-form rename; see `slopp.refactor` notes below.

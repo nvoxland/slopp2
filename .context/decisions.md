@@ -501,7 +501,17 @@ Correctness/safety all held: rename flawless for every model, checkpoint lint
 caught a real ordering mistake, zero wrong-behavior incidents. **Fork partially resolved — W1 (user decision):** whole-namespace batch
 writes are allowed for BRAND-NEW namespaces only (never overwrite): `ingest`
 is that path, now with the standard verified-write tail (side benefit: it
-seeds the trace map, so narrowing works from the first edit). Deferred
+seeds the trace map, so narrowing works from the first edit).
+**W1 follow-up (tool consolidation, 2026-07):** the separate `ingest` MCP tool
+was folded into `ns_create` as an optional `:source` mode — `ns_create` was
+already `ingest!` of an empty ns, so two creation doors were one primitive with
+a "which do I use?" fork. Now ONE door, two mutually-exclusive modes:
+`:requires` scaffolds an empty ns to grow with red-first TDD (the default for
+new behavior — ingesting finished code skips red→green); `:source` lands a
+whole namespace at once (ported/reference/data). The `ingest!` engine fn stays
+internal (git-import, seeds); "ingest" is gone from the agent-facing surface. No
+alias kept (slopp has no installed base; an alias would re-introduce the fork).
+Deferred
 verification / whole-ns overwrite remain off the table. The scale side of the
 fork (10+-namespace eval, too big to read whole) is the next experiment. Data: benchmarks/results.md; report: projects/eval2/REPORT.md.
 

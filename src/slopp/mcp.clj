@@ -14,17 +14,13 @@
 (def ^:private protocol-version "2024-11-05")
 
 (def tools
-  [{:name "ingest"
-    :description "The batch write for a BRAND-NEW namespace: land its complete source in one verified call. Cannot overwrite an existing namespace — edit its forms instead."
-    :inputSchema {:type "object"
-                  :properties {:ns {:type "string"} :source {:type "string"}
-                               :agent {:type "string"}}
-                  :required ["ns" "source"]}}
-   {:name "ns_create"
-    :description "Create a brand-new namespace, optionally with require clauses (strings like \"[clojure.string :as str]\")."
+  [{:name "ns_create"
+    :description "Bring a BRAND-NEW namespace into being (cannot overwrite an existing one — edit its forms instead). TWO modes: pass `requires` (clause strings like \"[clojure.string :as str]\") to scaffold an empty namespace you then grow form-by-form with red-first TDD — the default for new behavior; OR pass `source` (the whole namespace text, including its own (ns …) form) to land the entire namespace in one verified call (forward refs resolve as a unit, like a real .clj load) — for ported/reference/data code not subject to red→green. `requires` and `source` are mutually exclusive."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"}
-                               :requires {:type "array" :items {:type "string"}}}
+                               :requires {:type "array" :items {:type "string"}}
+                               :source {:type "string"}
+                               :agent {:type "string"}}
                   :required ["ns"]}}
    {:name "ns_add_require"
     :description "Add one require clause (e.g. \"[clojure.string :as str]\") to a namespace's ns form (tracked, hot-reloaded)."
@@ -329,7 +325,7 @@
 (def ^:private write-tools
   (into single-write-tools
         ["edit_delete_form" "edit_group" "edit_rename" "edit_extract"
-         "edit_move" "ns_add_require" "ns_remove_require" "ingest" "ns_create"
+         "edit_move" "ns_add_require" "ns_remove_require" "ns_create"
          "checkpoint" "commit_point" "deps_add" "deps_remove" "deps_pure"]))
 
 (defn- track-hint!
@@ -380,7 +376,7 @@ WRITE:   every write verifies immediately and returns :test — trust it.
          edit_group {steps prompt}  <- SEVERAL forms for one reason: always batch
          edit_rename {ns old new}   <- never rename by editing call sites
          edit_extract {ns from form name} · edit_move {ns name before}
-         ingest {ns source}         <- whole NEW namespace in one call
+         ns_create {ns requires?|source?}  <- NEW namespace: scaffold+grow, or whole source at once
          ns_add_require / ns_remove_require  <- never hand-edit the ns form
 RULES:   every write must compile (define callees first; (declare x) for cycles)
          red-first TDD = minimal fn + test in ONE edit_group, then replace
@@ -447,9 +443,10 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                      (clojure.core/name k) " for " name)
                                 {}))))]
     (case name
-      "ingest"            (text (api/ingest! session (sym :ns) (:source a) :agent (:agent a)))
       "ns_create"         (text (api/create-ns! session (sym :ns)
-                                                :requires (:requires a)))
+                                                :requires (:requires a)
+                                                :source (:source a)
+                                                :agent (:agent a)))
       "ns_add_require"    (text (-> (api/add-require! session (sym :ns) (:require a)
                                                       :prompt (:prompt a))
                                     (select-keys [:error :warnings :existing-warnings

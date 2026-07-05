@@ -25,7 +25,7 @@
   ;; v2: the two-form fix rides ONE edit_group (F2) instead of two replaces
   {:name "calculator" :v 2 :test-ns "calc.core"
    :steps
-   [{:tool "ingest" :args {:ns "calc.core" :source "(ns calc.core\n  (:require [clojure.test :refer [deftest is]]))\n"}}
+   [{:tool "ns_create" :args {:ns "calc.core" :source "(ns calc.core\n  (:require [clojure.test :refer [deftest is]]))\n"}}
     {:tool "edit_add_form" :args {:ns "calc.core" :prompt "tokenizer"
                                   :source "(defn tokenize [s]\n  (mapv (fn [t] (if (re-matches #\"\\d+(\\.\\d+)?\" t) (parse-double t) (keyword t)))\n        (re-seq #\"\\d+(?:\\.\\d+)?|[-+*/()]\" s)))"}}
     {:tool "edit_add_form" :args {:ns "calc.core" :prompt "tokenizer test"
@@ -54,7 +54,7 @@
 (def inventory
   {:name "inventory" :v 1 :test-ns "inv.core"
    :steps
-   [{:tool "ingest" :args {:ns "inv.core" :source "(ns inv.core\n  (:require [clojure.test :refer [deftest is]]))\n"}}
+   [{:tool "ns_create" :args {:ns "inv.core" :source "(ns inv.core\n  (:require [clojure.test :refer [deftest is]]))\n"}}
     {:tool "edit_add_form" :args {:ns "inv.core" :prompt "store constructor"
                                   :source "(defn make-store [] (atom {}))"}}
     ;; mutating fn deliberately MIS-named (no !) — D6 warning comes back
@@ -70,7 +70,7 @@
 (def wordstats
   {:name "wordstats" :v 1 :test-ns "ws.core"
    :steps
-   [{:tool "ingest" :args {:ns "ws.core" :source "(ns ws.core\n  (:require [clojure.test :refer [deftest is]]\n            [clojure.string :as str]))\n"}}
+   [{:tool "ns_create" :args {:ns "ws.core" :source "(ns ws.core\n  (:require [clojure.test :refer [deftest is]]\n            [clojure.string :as str]))\n"}}
     {:tool "edit_add_form" :args {:ns "ws.core" :prompt "split words"
                                   :source "(defn words [s]\n  (remove str/blank? (str/split (str/lower-case s) #\"[^a-z0-9']+\")))"}}
     {:tool "edit_add_form" :args {:ns "ws.core" :prompt "frequencies"

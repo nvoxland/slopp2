@@ -30,7 +30,7 @@
 (deftest tools-call-end-to-end
   (let [sess (api/open!)]
     (try
-      (call sess "ingest" {:ns "demo" :source "(ns demo)\n(defn add [x y] (+ x y))\n"})
+      (call sess "ns_create" {:ns "demo" :source "(ns demo)\n(defn add [x y] (+ x y))\n"})
       (testing "query_source (VFS read)"
         (is (re-find #"defn add" (call sess "query_source" {:ns "demo"}))))
       (testing "query_eval hits the oracle"
@@ -55,7 +55,7 @@
         (let [h (call sess "help" {})]
           (is (re-find #"edit_group" h))
           (is (re-find #"query_project" h))))
-      (call sess "ingest" {:ns "hint" :source "(ns hint (:require [clojure.test :refer [deftest is]]))\n(defn f [x] x)\n(deftest f-t (is (= 1 (f 1))))\n"})
+      (call sess "ns_create" {:ns "hint" :source "(ns hint (:require [clojure.test :refer [deftest is]]))\n(defn f [x] x)\n(deftest f-t (is (= 1 (f 1))))\n"})
       (testing "redundant test_runs earn a hint; a write resets the counter"
         (call sess "test_run" {:ns "hint"})
         (call sess "test_run" {:ns "hint"})
@@ -73,7 +73,7 @@
 (deftest rename-arg-forgiveness                        ; from the symmetric eval
   (let [sess (api/open!)]
     (try
-      (call sess "ingest" {:ns "ra" :source "(ns ra)\n(defn f [x] x)\n(defn g [x] (f x))\n"})
+      (call sess "ns_create" {:ns "ra" :source "(ns ra)\n(defn f [x] x)\n(defn g [x] (f x))\n"})
       (testing "the aliases every eval run guessed first now just work"
         (let [r (edn/read-string (call sess "edit_rename"
                                        {:ns "ra" :name "f" :to "h"}))]
@@ -88,7 +88,7 @@
 (deftest write-op-arg-forgiveness                      ; eval round 2
   (let [sess (api/open!)]
     (try
-      (call sess "ingest" {:ns "wa" :source "(ns wa)\n(defn f [x] (+ x x 1))\n(defn g [x] (f x))\n"})
+      (call sess "ns_create" {:ns "wa" :source "(ns wa)\n(defn f [x] (+ x x 1))\n(defn g [x] (f x))\n"})
       (testing "edit_group accepts :op for :action; bad actions get a real message"
         (let [r (edn/read-string (call sess "edit_group"
                                        {:steps [{:op "replace" :ns "wa" :name "g"
@@ -108,7 +108,7 @@
 (deftest green-responses-are-terse                     ; B1
   (let [sess (api/open!)]
     (try
-      (call sess "ingest" {:ns "b1" :source "(ns b1 (:require [clojure.test :refer [deftest is]]))\n(defn f [x] x)\n(deftest f-t (is (= 1 (f 1))))\n"})
+      (call sess "ns_create" {:ns "b1" :source "(ns b1 (:require [clojure.test :refer [deftest is]]))\n(defn f [x] x)\n(deftest f-t (is (= 1 (f 1))))\n"})
       (call sess "test_run" {:ns "b1"})
       (testing "a quiet green edit returns the terse shape"
         (let [r (edn/read-string (call sess "edit_replace_form"

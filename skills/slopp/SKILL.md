@@ -75,8 +75,8 @@ Server: `clojure -M -m slopp.mcp` (stdio) from the slopp repo.
 
 | Situation | Tool |
 |---|---|
-| New namespace, content known up front | `ingest` — the whole namespace's source in ONE verified call (new namespaces only; never overwrites) |
-| New namespace, building incrementally | `ns_create` (create dependencies FIRST — a require of a not-yet-created ns fails) |
+| New namespace, build it up with TDD | `ns_create {ns, requires}` — scaffolds an empty ns; grow it form-by-form (create dependency nses FIRST — a require of a not-yet-created ns fails). The default for new *behavior* |
+| New namespace, whole source ready | `ns_create {ns, source}` — lands the entire namespace in ONE verified call (ported/reference/data code not subject to red→green; new namespaces only, never overwrites) |
 | New/removed require | `ns_add_require` / `ns_remove_require` (never hand-edit the ns form) |
 | New function/test | `edit_add_form` (one form per call) |
 | Change a function | `edit_replace_form` (submit the whole new form) |
@@ -181,7 +181,7 @@ turn_begin turn_end · query_project query_search query_namespaces
 query_outline query_source query_symbol query_references query_deps
 query_lineage query_history query_form_history query_form_at query_status_at
 query_search_history query_changes query_eval
-query_observe query_macroexpand query_branches · ingest ns_create
+query_observe query_macroexpand query_branches · ns_create
 ns_add_require ns_remove_require · edit_add_form edit_replace_form
 edit_delete_form edit_subform edit_group edit_rename edit_extract
 edit_extract_ns edit_move edit_revert episode_revert ns_rename

@@ -25,7 +25,7 @@
       (testing "tool calls over HTTP hit the same dispatch as MCP"
         (is (re-find #":forms 2"
                      (:result (post! port "/call"
-                                     {:name "ingest"
+                                     {:name "ns_create"
                                       :arguments {:ns "h.core"
                                                   :source "(ns h.core)\n(defn f [x] (* 2 x))\n"}}))))
         (is (re-find #"defn f" (:result (post! port "/call"
