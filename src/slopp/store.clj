@@ -42,6 +42,16 @@
         (let [nm (second s)]
           (when (symbol? nm) nm))))))
 
+(defn name-of-source
+  "The symbol a top-level form SOURCE string defines, or nil — the parse-back
+  companion to `form-symbol` (used to resolve a form's NAME at a past delta,
+  where names can differ from now via rename)."
+  [source]
+  (when source
+    (some-> (first (filter n/sexpr-able?
+                           (n/children (p/parse-string-all source))))
+            form-symbol)))
+
 (defn ingest
   "Parse `source` into `ns-sym`'s ordered elements, assigning a fresh id to each
   form, and append an `:ingest` delta. Returns the new store."

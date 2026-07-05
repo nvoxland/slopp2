@@ -28,7 +28,7 @@
 (declare run-verification! forms-changed-since query-outline
          hot-load-all! fresh-image! reap-idle-images!
          content-ops delta-fids episode-boundary episode-span
-         query-changes edit-group! fix-declares!)
+         query-changes edit-group! fix-declares! status-at status-after)
 
 (defn- start-spare!
   "Kick off a background-warming spare image (D5 warm spare) if enabled."
@@ -390,7 +390,10 @@
 
 (defn query-form-history
   "Every content version of `nm`'s form, oldest first, with the intent that
-  produced it: [{:delta :op :prompt :source}]. The semantic×history core."
+  produced it and the verification state it landed in:
+  [{:delta :op :prompt :source :status :turn-intent}]. `:status`
+  (was-green-at, HM2) is the project's verification state governing each
+  version — semantic × history, per form."
   [session ns-sym nm]
   (let [st (:store @session)
         id (:id (store/form-named st ns-sym nm))]
@@ -400,7 +403,7 @@
                    :let  [src (get-in d [:sources id])]
                    :when src]
                (cond-> {:delta (:id d) :op (:op d) :prompt (:prompt d)
-                        :source src}
+                        :source src :status (status-after st (:id d))}
                  (ti (:id d)) (assoc :turn-intent (ti (:id d))))))))))
 
 (defn- human-time
@@ -1529,6 +1532,98 @@
     (if-let [r (:result v)]
       (if (zero? (+ (:fail r 0) (:error r 0))) :green :red)
       :unknown)))
+
+(defn- status-after
+  "The verification outcome a delta PRODUCED: the first `:verify` at or after
+  `at-id` (a write is immediately followed by its verify) — :green / :red /
+  :unknown. This is 'did THIS version land green', vs `status-at`'s 'what
+  was the state standing AT this point'."
+  [store at-id]
+  (let [ds (drop-while #(not= at-id (:id %)) (store/deltas store))
+        v  (first (filter #(= :verify (:op %)) ds))]
+    (if-let [r (:result v)]
+      (if (zero? (+ (:fail r 0) (:error r 0))) :green :red)
+      :unknown)))
+
+(defn- resolve-at
+  "Normalize an `at` argument to a plain delta id: a `:commit` marker id
+  becomes its `:target` (time-travel to a milestone points at the
+  milestone's state); any other existing delta id passes through; an unknown
+  id → nil (the caller reports it)."
+  [store at]
+  (when at
+    (let [d (first (filter #(= at (:id %)) (store/deltas store)))]
+      (cond
+        (nil? d)            nil
+        (= :commit (:op d)) (:target d)
+        :else               at))))
+
+(defn- verify-at
+  "The last `:verify` delta at or before `at-id` (the one governing that
+  point), or nil."
+  [store at-id]
+  (let [upto (reduce (fn [acc d]
+                       (let [acc (conj acc d)]
+                         (if (= at-id (:id d)) (reduced acc) acc)))
+                     [] (store/deltas store))]
+    (last (filter #(= :verify (:op %)) upto))))
+
+(defn query-status-at
+  "was-green-at: the project's verification state that GOVERNED delta `at`
+  (a delta id, or a commit-point id → its target) — the last `:verify` at or
+  before it. Returns {:at :status (:green|:red|:unknown) :verify <delta-id>}
+  or {:error} for an unknown delta."
+  [session & {:keys [at]}]
+  (let [st (:store @session)]
+    (cond
+      (nil? at)              {:error "query-status-at needs :at"}
+      (nil? (resolve-at st at)) {:error (str "no delta " at
+                                             " in this branch's history")}
+      :else (let [rid (resolve-at st at)]
+              (cond-> {:at rid :status (status-at st rid)}
+                (verify-at st rid) (assoc :verify (:id (verify-at st rid))))))))
+
+(defn- fid-ns-at
+  "form-id → owning namespace as of delta `at-id`, folded from the log (each
+  content delta carries its `:ns` and the form-ids it touched). Lets
+  time-travel disambiguate same-named forms in different namespaces at a
+  PAST point, without depending on the current store's membership."
+  [store at-id]
+  (reduce (fn [m d]
+            (let [m (reduce #(assoc %1 %2 (:ns d)) m (delta-fids d))]
+              (if (= at-id (:id d)) (reduced m) m)))
+          {} (store/deltas store)))
+
+(defn query-form-at
+  "Time-travel: form `nm` in `ns-sym` as its SOURCE stood at delta `at` (a
+  delta id, or a commit-point id → its target). Returns
+  {:ns :name :at :source :status} — `:status` is the project's verification
+  state that governed that point (was-green-at) — or {:error}. Names are
+  resolved AT that delta (so a form that was later renamed still answers to
+  the name it had then). The form's source is stored verbatim per version,
+  so this is exact, not reconstructed."
+  [session ns-sym nm & {:keys [at]}]
+  (let [st (:store @session)]
+    (cond
+      (nil? at)
+      {:error "query-form-at needs :at (a delta id or a commit-point id)"}
+
+      (nil? (resolve-at st at))
+      {:error (str "no delta " at " in this branch's history")}
+
+      :else
+      (let [rid   (resolve-at st at)
+            srcs  (store/sources-at st rid)
+            ns-of (fid-ns-at st rid)
+            fid   (some (fn [[fid src]]
+                          (when (and (= ns-sym (get ns-of fid))
+                                     (= (str nm) (str (store/name-of-source src))))
+                            fid))
+                        srcs)]
+        (if fid
+          {:ns ns-sym :name nm :at rid :source (get srcs fid)
+           :status (status-at st rid)}
+          {:error (str nm " was not present in " ns-sym " at " rid)})))))
 
 (defn commit-point!
   "Record a MILESTONE (P4-m7): run the full checkpoint pipeline (normalize,

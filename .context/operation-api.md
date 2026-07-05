@@ -32,6 +32,29 @@ ms stays in the store); `query-history {format "text"}` is the story view;
 `query-changes {format "text"}` renders LINE diffs (LCS — context lines are
 never re-emitted as churn). EDN stays the agent-facing default.
 
+## Semantic × history depth (roadmap #5 — "the moat")
+
+Queries over the journal that git can't represent — form granularity ×
+verified history:
+- `query-form-at {ns name :at}` — **TIME-TRAVEL**: a form's source exactly
+  as it stood at delta `at` (a delta id OR a commit-point id → its
+  `:target`). Names resolve AS OF that delta (`fid-ns-at` + parse-back via
+  `store/name-of-source`), so a later-renamed form still answers to the name
+  it had then; a form absent at that point is an honest `{:error}`, never a
+  guess. Exact, not reconstructed — each version's source is stored verbatim
+  (`store/sources-at`). Carries `:status` = the was-green-at state
+  (`status-at`) governing that point.
+- `query-status-at {:at}` — **WAS-GREEN-AT**: the verification state
+  (`:green`/`:red`/`:unknown`) that GOVERNED delta `at` (a delta or
+  commit-point id) — the last `:verify` at or before it (`status-at`), plus
+  the governing `:verify` delta id.
+- `query-form-history` versions now carry `:status` too — but via
+  `status-after` (the verify a version PRODUCED, "did this version land
+  green", the first verify AT OR AFTER the delta), not `status-at`'s
+  standing-at-a-point reading. Two genuinely different questions; keep them
+  distinct.
+- (HM3+) delta-log search, per-form diff timelines — land next.
+
 ## Write surface (each = tracked delta(s) + hot-reload + verification + provenance)
 
 - `ingest!` — load a whole namespace from source; returns `{:ns :forms}` or

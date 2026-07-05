@@ -91,6 +91,17 @@
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}}
                   :required ["ns" "name"]}}
+   {:name "query_form_at"
+    :description "TIME-TRAVEL: a form's source exactly as it stood at a past point. :at is a delta id OR a commit-point id (resolves to that milestone's state). Names resolve as of that delta (a later-renamed form still answers to its old name). Returns {:source :status (was-green-at) :at} or {:error}."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :name {:type "string"}
+                               :at {:type "string"}}
+                  :required ["ns" "name" "at"]}}
+   {:name "query_status_at"
+    :description "WAS-GREEN-AT: the project's verification state (:green/:red/:unknown) that governed a past point — the last verify at or before :at (a delta id OR a commit-point id). Returns {:at :status :verify <delta>} or {:error}."
+    :inputSchema {:type "object"
+                  :properties {:at {:type "string"}}
+                  :required ["at"]}}
    {:name "query_eval"
     :description "Read-only eval against the live image (the oracle); never edits code."
     :inputSchema {:type "object" :properties {:code {:type "string"}} :required ["code"]}}
@@ -445,6 +456,9 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                    :format (:format a)
                                                    :limit (or (:limit a) 20)))
       "query_form_history" (text (api/query-form-history session (sym :ns) (sym :name)))
+      "query_form_at"     (text (api/query-form-at session (sym :ns) (sym :name)
+                                                   :at (:at a)))
+      "query_status_at"   (text (api/query-status-at session :at (:at a)))
       "query_eval"        (text (api/query-eval session (:code a)))
       "query_observe"     (text (api/query-observe session (sym :ns) (sym :name)
                                                    (:code a)

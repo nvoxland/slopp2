@@ -165,7 +165,8 @@ rebuilds a faithful image from the store).
 
 turn_begin turn_end · query_project query_search query_namespaces
 query_outline query_source query_symbol query_references query_deps
-query_lineage query_history query_form_history query_changes query_eval
+query_lineage query_history query_form_history query_form_at query_status_at
+query_changes query_eval
 query_observe query_macroexpand query_branches · ingest ns_create
 ns_add_require ns_remove_require · edit_add_form edit_replace_form
 edit_delete_form edit_subform edit_group edit_rename edit_extract
