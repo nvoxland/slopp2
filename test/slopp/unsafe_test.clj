@@ -91,6 +91,24 @@
           (is (re-find #"unsafe" (str (:error r))))
           (is (nil? (get-in (:store @sess) [:namespaces 'ig.bad]))
               "the rejected namespace must not have committed")))
+      (testing "ALL offending forms are reported at once, not just the first"
+        ;; else a whole-ns import must be re-sent once per host form, discovering
+        ;; them one rejection at a time (brutal for a big namespace)
+        (let [r (api/ingest! sess 'ig.many
+                             (str "(ns ig.many)\n"
+                                  "(defn a [x] (alter-var-root x (constantly 1)))\n"
+                                  "(defn b [y] (binding [*out* *out*] y))\n"
+                                  "(defn c [z] (read-string z))\n"))
+              e (str (:error r))]
+          (is (:error r))
+          (doseq [nm ["a" "b" "c"]]
+            (is (re-find (re-pattern (str "\\b" nm "\\b")) e)
+                (str "expected form " nm " named in: " e)))
+          (doseq [sym ["alter-var-root" "binding" "read-string"]]
+            (is (re-find (re-pattern sym) e)
+                (str "expected symbol " sym " named in: " e)))
+          (is (nil? (get-in (:store @sess) [:namespaces 'ig.many]))
+              "the rejected namespace must not have committed")))
       (testing "the same form marked ^:unsafe imports cleanly (never frozen)"
         (let [r (api/ingest! sess 'ig.ok
                              "(ns ig.ok)\n^:unsafe\n(defn f [a] (alter-var-root a (constantly 1)))\n")]

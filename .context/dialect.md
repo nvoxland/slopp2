@@ -17,7 +17,10 @@ before this, `ingest!` skipped the gate, so a host form could enter the store
 UNMARKED and then be **frozen** — the edit path would refuse to modify its own
 body (it contains a denylisted symbol). Now a host form can only enter already
 `^:unsafe`, so imported code is never frozen. `ingest!` also returns its
-`!`-warnings now (it used to swallow them).
+`!`-warnings now (it used to swallow them). `dialect-scan` reports EVERY
+offending form in one error (not just the first) — else a whole-ns import must
+be re-sent once per host form, discovering them one rejection at a time (a
+self-host loading finding).
 
 Philosophy: keep **data dynamism** (open maps, loose args — the advantage the
 live oracle makes safe); constrain **metaprogramming dynamism** (what defeats

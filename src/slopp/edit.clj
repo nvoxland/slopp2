@@ -3,7 +3,8 @@
   commit delta (D-store) -> hot-reload into the image (D5) -> return with
   `!`-effect warnings (D6). Verification (affected tests + restart-as-diagnostic)
   is orchestrated one level up, in slopp.api."
-  (:require [rewrite-clj.parser :as p]
+  (:require [clojure.string :as str]
+            [rewrite-clj.parser :as p]
             [rewrite-clj.node :as n]
             [rewrite-clj.zip :as z]
             [slopp.store :as store]
@@ -147,16 +148,22 @@
   "Run the D3/D4 dialect gate (the SAME check `parse-form` applies per form) over
   every form of `ns-sym` already in `store`. The import path parses a whole
   namespace at once, so it can't gate through `parse-form` — this closes the
-  hole. Returns the first violation as an error string naming the form, or nil
-  if all are admissible. `^:unsafe` forms pass exactly as on the edit path: a
-  host form can only ENTER the store already marked, so it is never frozen
-  (un-editable) against a later edit of its own body."
+  hole. Returns an error string naming EVERY offending form (a whole-ns import
+  otherwise has to be re-sent once per host form, discovering them one rejection
+  at a time), or nil if all are admissible. `^:unsafe` forms pass exactly as on
+  the edit path: a host form can only ENTER the store already marked, so it is
+  never frozen (un-editable) against a later edit of its own body."
   [store ns-sym]
-  (some (fn [e]
-          (when-let [err (dialect-check (:node e))]
-            (str "form " (or (:name e) "?") ": " err
-                 " — mark the form ^:unsafe if this boundary code is intentional")))
-        (store/forms store ns-sym)))
+  (let [violations (keep (fn [e]
+                           (when-let [err (dialect-check (:node e))]
+                             (str "  " (or (:name e) "?") ": " err)))
+                         (store/forms store ns-sym))]
+    (when (seq violations)
+      (str (if (= 1 (count violations))
+             "1 form uses a denylisted symbol — mark it ^:unsafe"
+             (str (count violations) " forms use denylisted symbols — mark each ^:unsafe"))
+           " if the boundary code is intentional:\n"
+           (str/join "\n" violations)))))
 
 (defn replace-form
   "Pure edit: validate `new-source` (one dialect-legal form) and replace the form
