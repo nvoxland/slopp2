@@ -45,26 +45,36 @@
   "deps.edn for the built project; `deps` (lib→coord, the store's Tier-1
   manifest) becomes the `:deps` map so a built project is runnable; with
   `native?`, adds the :native alias (AOT output path, graal-build-time, direct
-  linking) — manifest deps flow to the native classpath via `-Spath -A:native`.
-  With an EMPTY manifest the output is byte-identical to the pre-manifest
-  version (the build! `ours?` byte-identity guard relies on this)."
+  linking) — manifest deps flow to the native classpath via `-Spath -A:native`;
+  with `test?`, adds a `:test` alias putting `test/` on an extra-path so the
+  project's test namespaces (materialized under `test/`, off the default
+  classpath) are runnable. With an EMPTY manifest and no test/native aliases the
+  output is byte-identical to the pre-manifest version (the build! `ours?`
+  byte-identity guard relies on this)."
   ([native?] (deps-edn native? {}))
-  ([native? deps]
+  ([native? deps] (deps-edn native? deps false))
+  ([native? deps test?]
    ;; bind *print-namespace-maps* OFF: it defaults true at a REPL, false in a
    ;; script — leaving it would make output non-deterministic (the git
    ;; projection + build! ours? guard both depend on byte-stable output).
    (let [deps-str (if (seq deps)
                     (str " :deps " (binding [*print-namespace-maps* false]
                                      (pr-str deps)))
-                    "")]
-     (if-not native?
+                    "")
+         ;; each alias entry is "KEY\n  {VALUE}"; the first sits right after the
+         ;; aliases-map `{` (matching the historical single-:native layout), the
+         ;; rest are 2-space-indented — order is deterministic (test, native).
+         aliases  (cond-> []
+                    test?   (conj (str ":test\n  {:extra-paths [\"test\"]}"))
+                    native? (conj (str ":native\n"
+                                       "  {:extra-paths [\"classes\"]\n"
+                                       "   :extra-deps  {com.github.clj-easy/graal-build-time {:mvn/version \"1.0.5\"}}\n"
+                                       "   :jvm-opts    [\"-Dclojure.compiler.direct-linking=true\"]}")))]
+     (if (empty? aliases)
        (str "{:paths [\"src\"]" deps-str "}\n")
        (str "{:paths [\"src\"]" deps-str "\n"
             " :aliases\n"
-            " {:native\n"
-            "  {:extra-paths [\"classes\"]\n"
-            "   :extra-deps  {com.github.clj-easy/graal-build-time {:mvn/version \"1.0.5\"}}\n"
-            "   :jvm-opts    [\"-Dclojure.compiler.direct-linking=true\"]}}}\n")))))
+            " {" (str/join "\n  " aliases) "}}\n")))))
 
 (defn native-script
   "build-native.sh: AOT-compile the launcher (and, transitively, the app),

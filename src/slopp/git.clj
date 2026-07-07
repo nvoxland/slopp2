@@ -121,14 +121,16 @@
 ;; trees
 
 (defn- commit-paths
-  "{path content} for a milestone's tree: every namespace under src/ (same
-  layout as build!) plus the generated deps.edn (carrying the store's Tier-1
-  manifest `deps`, so a clone is runnable)."
+  "{path content} for a milestone's tree: every namespace under src/ (test
+  namespaces under test/ — same layout as build!) plus the generated deps.edn
+  (carrying the store's Tier-1 manifest `deps` and, when the project has tests,
+  a :test alias, so a clone is runnable)."
   [tree-map deps]
   (into (sorted-map)
-        (cons ["deps.edn" (build/deps-edn false deps)]
+        (cons ["deps.edn" (build/deps-edn false deps
+                                          (boolean (some render/test-ns? (keys tree-map))))]
               (map (fn [[ns-sym src]]
-                     [(str "src/" (render/ns-path ns-sym)) src])
+                     [(render/source-path ns-sym) src])
                    tree-map))))
 
 (defn- backfill-tree
@@ -372,9 +374,10 @@
 ;; of whole files): those reject with the reason on the pusher's terminal.
 
 (defn- path->ns
-  "src/gi/core.clj → gi.core; nil when the path isn't importable source."
+  "src/gi/core.clj → gi.core (test/gi/core_test.clj → gi.core-test); nil when the
+  path isn't importable source."
   [path]
-  (when-let [[_ p] (re-matches #"src/(.+)\.clj" (str path))]
+  (when-let [[_ p] (re-matches #"(?:src|test)/(.+)\.clj" (str path))]
     (symbol (-> p (str/replace "/" ".") (str/replace "_" "-")))))
 
 (defn- blob-str [^Repository repo oid]
@@ -497,7 +500,7 @@
   (some (fn [{:keys [path new]}]
           (cond
             (nil? (path->ns path))
-            {:error (str path ": only src/**.clj can change over git")}
+            {:error (str path ": only src/**.clj or test/**.clj can change over git")}
             (nil? new)
             {:error (str path ": file deletion over git is not supported"
                          " — delete forms through slopp instead")}

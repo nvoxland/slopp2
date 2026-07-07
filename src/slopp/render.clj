@@ -31,6 +31,20 @@
   [ns-sym]
   (str (-> (str ns-sym) (str/replace "-" "_") (str/replace "." "/")) ".clj"))
 
+(defn test-ns?
+  "Convention: a namespace whose name ends in `-test` is a test namespace
+  (matches cognitect test-runner's default and slopp's own layout), so it
+  materializes under `test/` rather than `src/`."
+  [ns-sym]
+  (str/ends-with? (str ns-sym) "-test"))
+
+(defn source-path
+  "The materialized file path for a namespace, rooted by convention: production
+  code under `src/`, test namespaces under `test/`. e.g. `slopp.semver` →
+  `src/slopp/semver.clj`; `slopp.semver-test` → `test/slopp/semver_test.clj`."
+  [ns-sym]
+  (str (if (test-ns? ns-sym) "test/" "src/") (ns-path ns-sym)))
+
 (declare element-offsets)
 
 (defn owner-form

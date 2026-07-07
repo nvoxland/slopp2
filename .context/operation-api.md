@@ -140,7 +140,11 @@ is what catches a missing one.
   effectful-by-default boundary) at var / namespace / whole-lib granularity
   (a lib expands to every namespace it provides; see `dependencies.md`).
 - `restart!` — agent-callable fresh image (D5 escape hatch).
-- `build!` — materialize `.clj` files (the C1/C6 explicit build). With
+- `build!` — materialize `.clj` files (the C1/C6 explicit build): production
+  namespaces under `src/`, **test namespaces (name ends `-test`) under `test/`**
+  (`render/source-path`) — a normal Clojure layout. When any test namespace
+  exists the generated deps.edn gains a `:test {:extra-paths ["test"]}` alias so
+  `test/` is runnable (off the default classpath). With
   `:main` (qualified entry fn) it also emits the O4 native-binary recipe:
   a generated launcher, a `:native` deps alias, and `build-native.sh`
   (user runs it; needs GraalVM 21+ on PATH). Generators live in

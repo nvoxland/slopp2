@@ -164,6 +164,24 @@
       (is (re-find #"org\.clojure/data\.json" s))
       (is (re-find #"2\.5\.0" s)))))
 
+(deftest build-deps-edn-test-alias
+  (testing "no test alias by default — byte-identity preserved"
+    (is (not (re-find #":test" (build/deps-edn false {} false))))
+    (is (= "{:paths [\"src\"]}\n" (build/deps-edn false {} false)))
+    (is (= (build/deps-edn true {}) (build/deps-edn true {} false))))
+  (testing "test? adds a :test alias putting test/ on a runnable extra-path"
+    (let [s (build/deps-edn false {} true)
+          m (clojure.edn/read-string s)]
+      (is (re-find #":aliases" s))
+      (is (= ["test"] (get-in m [:aliases :test :extra-paths])))
+      (is (= ["src"] (:paths m)))))
+  (testing "test? composes with the native alias and the manifest"
+    (let [m (clojure.edn/read-string
+             (build/deps-edn true {'org.clojure/data.json {:mvn/version "2.5.0"}} true))]
+      (is (= ["test"] (get-in m [:aliases :test :extra-paths])))
+      (is (contains? (:aliases m) :native))
+      (is (contains? (:deps m) 'org.clojure/data.json)))))
+
 ;; ---------------------------------------------------------------------------
 ;; M4: dependency surface analysis (clj-kondo over the dep's own jars)
 

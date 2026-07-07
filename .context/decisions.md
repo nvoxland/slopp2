@@ -311,7 +311,7 @@ the change here (same commit).
     converge → markers land), between markers and rows heals at the next
     projection (`:git-sha` repair). Git is a guest writer — the ambiguous
     cases REJECT with the reason on the pusher's terminal: non-`src/**.clj`
-    paths, file deletions, ns-declaration changes (requires are
+    (or `test/**.clj`) paths, file deletions, ns-declaration changes (requires are
     structural), anonymous top-level forms, duplicate names, per-form
     staleness (slopp moved since the push's base → "fetch first"),
     non-fast-forward/creates/deletes (JGit-level). Form deletions WITHIN a
@@ -465,6 +465,17 @@ the change here (same commit).
     pattern); a missing manifest is a WARN, not a hard incompatibility.
   - Follow-on (M7): `.context/dependencies.md` holds the full model + the
     capability-injection convention.
+  - **Build/projection layout follow-up (self-host finding):** materialized
+    projects (`build!` AND the git projection) route **test namespaces to
+    `test/`, production to `src/`** — a normal Clojure layout, instead of
+    dumping deftests into `src/` on the main classpath. A namespace is a test
+    namespace by the **`-test` name suffix** (`render/test-ns?` — matches
+    cognitect test-runner's default and slopp's own layout; content-based rules
+    misfile a test ns's helper defns or strand a production ns's inline test).
+    `render/source-path` picks the root; `build/deps-edn` gains a
+    `:test {:extra-paths ["test"]}` alias when the project has tests (so `test/`
+    is runnable, off the default classpath — no-test output stays byte-identical
+    so the `ours?` guard holds); git `path->ns` accepts `test/**.clj` on push.
 
 ## H — host
 

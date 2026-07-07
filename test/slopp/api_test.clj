@@ -69,3 +69,27 @@
             (api/build! sess dir)
             (is (re-find #":custom" (slurp (str dir "/deps.edn")))))))
       (finally (api/close! sess)))))
+
+(deftest build-routes-test-namespaces-to-test-dir
+  ;; a normal Clojure layout: production under src/, tests under test/, off the
+  ;; default classpath (a :test alias makes them runnable).
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'proj.core "(ns proj.core)\n(defn f [x] (inc x))\n")
+      (api/create-ns! sess 'proj.core-test
+                      :requires ["[clojure.test :refer [deftest is]]"
+                                 "[proj.core :as c]"])
+      (api/add-form! sess 'proj.core-test "(deftest f-t (is (= 2 (c/f 1))))")
+      (let [dir (str (Files/createTempDirectory "slopp-testdir"
+                                                (make-array FileAttribute 0)))
+            f   #(clojure.java.io/file dir %)]
+        (api/build! sess dir)
+        (testing "production ns under src/, test ns under test/ (not src/)"
+          (is (.exists (f "src/proj/core.clj")))
+          (is (.exists (f "test/proj/core_test.clj")))
+          (is (not (.exists (f "src/proj/core_test.clj")))))
+        (testing "deps.edn puts test/ on a runnable :test extra-path"
+          (let [m (clojure.edn/read-string (slurp (f "deps.edn")))]
+            (is (= ["src"] (:paths m)))
+            (is (= ["test"] (get-in m [:aliases :test :extra-paths]))))))
+      (finally (api/close! sess)))))

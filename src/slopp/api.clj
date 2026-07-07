@@ -2760,10 +2760,12 @@
         st       (:store @session)
         de       (io/file target "deps.edn")
         deps     (:deps st)
+        has-tests? (boolean (some render/test-ns? (keys (:namespaces st))))
         incompat (when main (seq (filter native-incompatible-deps (keys deps))))
         ;; a deps.edn is ours iff it's byte-identical to a generated variant
-        ;; (for THIS store's manifest — else a manifest change reads as foreign)
-        ours?    #(contains? #{(build/deps-edn false deps) (build/deps-edn true deps)}
+        ;; (for THIS store's manifest + test layout — else it reads as foreign)
+        ours?    #(contains? #{(build/deps-edn false deps has-tests?)
+                               (build/deps-edn true deps has-tests?)}
                              (slurp de))
         entry-ns (some-> main namespace symbol)]
     (cond
@@ -2795,11 +2797,11 @@
 
       :else
       (do (doseq [ns-sym (keys (:namespaces st))]
-            (let [file (io/file target "src" (render/ns-path ns-sym))]
+            (let [file (io/file target (render/source-path ns-sym))]
               (io/make-parents file)
               (spit file (render/render-ns st ns-sym))))
           (when (or main (not (.exists de)))
-            (spit de (build/deps-edn (boolean main) deps)))
+            (spit de (build/deps-edn (boolean main) deps has-tests?)))
           (cond-> {:built (str target)}
             main
             (assoc :native
