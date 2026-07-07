@@ -370,7 +370,8 @@
                :name       (:name f)
                :effectful? (contains? eff (symbol (str ns-sym) (str nm)))
                :source     (n/string (:node f))}
-        (edit/unsafe? (:node f)) (assoc :unsafe? true)))))
+        (edit/unsafe? (:node f)) (assoc :unsafe? true)
+        (edit/reads? (:node f))  (assoc :reads? true)))))
 
 (defn query-references
   "Usages of `ns-sym/nm` across EVERY namespace (F-3c3 — same-ns-only results

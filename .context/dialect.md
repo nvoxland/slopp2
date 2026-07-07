@@ -83,6 +83,22 @@ WARNINGS, never rejections. Store-ns and clojure-stdlib calls are unaffected
   convention; if console IO matters, surface it as separate `:effects` info
   rather than a naming rule.
 
+### `^:reads` — the per-form `!`-name override
+
+D6 knows store-internal reads aren't effects (`slurp`/`rand`/`now` aren't
+leaves). But the **M3 external boundary** treats an opaque-dep call as effectful
+worst-case — so a *read* through a dep (`jdbc/execute-one!` on a SELECT,
+`json/read-str`, `kondo/run!`) makes its caller "effectful" and D6 wants a `!`.
+By Clojure convention reads take no bang (`slurp`/`deref`/`d/q`), so a form
+tagged **`^:reads`** asserts exactly that — "I read external/mutable state but
+am not a mutation" — and `edit/ns-warnings` drops its naming warning
+(`edit/reads?`; surfaced as `:reads? true` on `query_symbol`). It is the same
+greppable, human-discharged, self-limiting move as `^:unsafe` — but
+**orthogonal**: `^:reads` touches ONLY the `!`-effect warning (not the dialect
+gate), `^:unsafe` touches ONLY the dialect gate (not the `!` warning); a form
+may carry both. (Self-host finding: slopp's own read-wrappers over jdbc/kondo —
+`db/load-store`, `index/analyze`, … — are exactly this case.)
+
 ## Enforcement stance
 
 Honest **labeling**, not capability restriction: the agent may write any

@@ -450,6 +450,21 @@ the change here (same commit).
       `:dep-pure` contains the var OR its namespace. No store/delta/merge change
       — `:dep-pure` already carries arbitrary symbols; the MCP arg went
       `var` → `target`. (Surfaced in `ideas/self-host-log.md` Attempt 2.)
+    - **D6 follow-up (self-host finding): `^:reads` per-form `!`-name override.**
+      Loading slopp's own `db`/`index` flagged ~11 read-wrappers (`load-store`,
+      `data-version`, `analyze`, …) — they read through an effectful-by-default
+      external dep (`jdbc/execute-one!` SELECT, `kondo/run!`), so M3 makes the
+      caller "effectful" and D6 wants a `!`. But Clojure convention is that reads
+      take no bang (`slurp`/`deref`/`d/q`; even Clojure core doesn't bang impure
+      reads), so the authors are right and the LINTER is stricter than the norm.
+      `deps_pure` can't fix it (next.jdbc isn't wholesale pure; its read/write
+      share one bang-named var). Resolution: tag the caller `^:reads` —
+      `edit/ns-warnings` drops its warning (`edit/reads?`, `:reads?` on
+      `query_symbol`). Chose a per-form greppable override (like `^:unsafe`) over
+      making D6 statically distinguish reads from writes — it can't, and this
+      keeps honest labeling with an explicit human assertion. Orthogonal to
+      `^:unsafe` (dialect only); a form may carry both. (Community norms
+      confirmed this direction; `ideas/self-host-log.md` Attempt 3.)
   - **M5 shipped:** the `^:integration` test tier (see `verification.md`) —
     the fast per-write path skips `^:integration` tests via a
     `skip-integration?` filter in `rt/traced-run`; `test_run`/`checkpoint`/

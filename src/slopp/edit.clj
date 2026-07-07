@@ -30,6 +30,17 @@
   [node]
   (boolean (:unsafe (meta (n/sexpr node)))))
 
+(defn reads?
+  "Does the top-level form carry `^:reads` metadata? The greppable,
+  human-discharged override of the D6 `!`-naming rule: the author asserts this
+  fn READS external/mutable state (so the effect analysis reaches an anchor —
+  a DB SELECT, `deref`, static analysis) but is a read, not a mutation, so it
+  takes no bang — matching Clojure's norm (`slurp`, `deref`, `d/q` carry no
+  `!`). Orthogonal to `^:unsafe` (dialect) — it suppresses only the effect
+  WARNING, and is self-limiting (a mutating form tagged `^:reads` is lying)."
+  [node]
+  (boolean (:reads (meta (n/sexpr node)))))
+
 (defn dialect-check
   "nil if the form is admissible; an error string otherwise (D3/D4). An
   `^:unsafe` form is admissible by assertion — the author takes on the
@@ -138,11 +149,19 @@
 (defn ns-warnings
   "D6 `!`-effect violations for `ns-sym`'s current state. The external-dep
   boundary (M3): a call into any namespace provided by a manifest dependency
-  (`:dep-ns`) is an effect anchor unless the var is in `:dep-pure`."
+  (`:dep-ns`) is an effect anchor unless the var is in `:dep-pure`. A form tagged
+  `^:reads` is EXEMPT — the author asserts it reads external/mutable state but is
+  intentionally not `!`-named (Clojure's read-takes-no-bang norm)."
   [store ns-sym]
-  (let [dep-nses (into #{} (mapcat identity) (vals (:dep-ns store)))]
-    (index/effect-violations (index/analyze (render/render-ns store ns-sym))
-                             dep-nses (:dep-pure store))))
+  (let [dep-nses (into #{} (mapcat identity) (vals (:dep-ns store)))
+        exempt   (into #{}
+                       (keep (fn [e]
+                               (when (and (:name e) (reads? (:node e)))
+                                 (symbol (str ns-sym) (str (:name e))))))
+                       (store/forms store ns-sym))]
+    (remove #(contains? exempt (:var %))
+            (index/effect-violations (index/analyze (render/render-ns store ns-sym))
+                                     dep-nses (:dep-pure store)))))
 
 (defn dialect-scan
   "Run the D3/D4 dialect gate (the SAME check `parse-form` applies per form) over

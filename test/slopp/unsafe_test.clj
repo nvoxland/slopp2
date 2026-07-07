@@ -36,6 +36,20 @@
   (testing "a NON-unsafe banned form still rejects"
     (is (:error (edit/parse-form "(defn h [] (eval '(+ 1 1)))")))))
 
+(deftest reads-marker-is-orthogonal-to-the-dialect-gate
+  ;; ^:reads suppresses the !-effect naming warning (a read takes no bang);
+  ;; it is NOT ^:unsafe and does NOT relax the D3/D4 dialect ban.
+  (testing "edit/reads? detects the ^:reads marker"
+    (is (edit/reads? (:node (edit/parse-form "^:reads (defn f [c] (q c))"))))
+    (is (not (edit/reads? (:node (edit/parse-form "(defn f [c] (q c))"))))))
+  (testing "^:reads does NOT bypass the dialect ban (only ^:unsafe does)"
+    (is (:error (edit/parse-form "^:reads (defn f [a] (binding [*out* *out*] a))"))))
+  (testing "^:reads composes with ^:unsafe when a form is both"
+    (let [n (:node (edit/parse-form
+                    "^:unsafe ^:reads (defn f [a] (binding [*out* *out*] @a))"))]
+      (is (edit/reads? n))
+      (is (edit/unsafe? n)))))
+
 ;; ---------------------------------------------------------------------------
 ;; end-to-end: an ^:unsafe form loads, is addressable, and round-trips
 

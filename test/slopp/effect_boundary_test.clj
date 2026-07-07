@@ -65,6 +65,29 @@
         (is (contains? (:dep-pure (:store @sess)) 'clojure.data.json)))
       (finally (api/close! sess)))))
 
+(deftest reads-suppresses-the-effect-name-warning   ; per-form !-effect override
+  ;; A fn that READS through an effectful-by-default external dep is flagged
+  ;; effectful (should be `!`). `^:reads` asserts it is a READ, not a mutation,
+  ;; so it takes no bang — the Clojure norm (slurp/deref/a SELECT read no bang).
+  ;; Greppable + self-limiting, like `^:unsafe` for the dialect gate.
+  (let [sess (api/open! {:dir (temp-dir)})]
+    (try
+      (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"} :agent "a")
+      (api/ingest! sess 'rd.core
+                   (str "(ns rd.core (:require [clojure.data.json :as json]))\n\n"
+                        "(defn peek-json [x] (json/read-str x))\n"))
+      (testing "a read through an external dep is flagged effectful by default"
+        (is (warns-about? sess 'rd.core 'peek-json)))
+      (testing "^:reads clears the naming warning"
+        (api/edit-replace! sess 'rd.core 'peek-json
+                           "^:reads\n(defn peek-json [x] (json/read-str x))")
+        (is (not (warns-about? sess 'rd.core 'peek-json))))
+      (testing "query_symbol surfaces :reads? (greppable), form still addressable"
+        (let [q (api/query-symbol sess 'rd.core 'peek-json)]
+          (is (:reads? q))
+          (is (= 'peek-json (:name q)))))
+      (finally (api/close! sess)))))
+
 (deftest store-and-stdlib-calls-are-not-external
   (let [sess (api/open! {:dir (temp-dir)})]
     (try

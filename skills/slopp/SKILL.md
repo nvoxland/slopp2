@@ -109,10 +109,14 @@ image, no restart), then `(:require ...)` it like normal. The library's own
 code is opaque to slopp's analysis, so a form that CALLS it is treated as
 effectful by default (name it `!`, or `deps_pure` it — at var, whole-namespace,
 or whole-lib granularity, so a wholesale-pure library like rewrite-clj is one
-call, not one per var). **`^:unsafe`**
+call, not one per var). If instead the fn READS through the dep (a SELECT,
+`json/read-str`) and shouldn't take a bang, tag it **`^:reads`** — the per-form
+override that drops the `!`-warning (shows as `:reads? true`; reads take no bang,
+per Clojure convention). **`^:unsafe`**
 on a top-level form opts it out of the dialect ban (macros, `binding`,
 `eval`, …) — the last resort for boundary code the analyzer can't vet; it's
 greppable and shows as `:unsafe? true`, and does NOT silence `!`-warnings.
+`^:reads` and `^:unsafe` are orthogonal (a form may carry both).
 
 **Red-first TDD, slopp-style:** add the function with a deliberately minimal
 body AND its test in ONE `edit_group` — that group's verification returns the

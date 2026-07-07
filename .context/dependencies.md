@@ -72,6 +72,11 @@ namespace granularity; the anchor check (`index/effectful-vars`) treats a call
 persist/branch/merge identically (the delta already carries an arbitrary
 `:sym`).
 
+`deps_pure` narrows a **dep** (it IS pure); when instead a *caller* reads through
+an effectful dep that can't be narrowed (a `jdbc/execute-one!` SELECT — reads and
+writes share the same bang-named var), tag the CALLER `^:reads` (per-form) so its
+`!`-naming warning is dropped. See `dialect.md`.
+
 ## Impure deps & testing (M5 + convention)
 
 - **`^:integration` test tier.** Tag a deftest `^:integration` (on the test
