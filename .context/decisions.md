@@ -465,6 +465,19 @@ the change here (same commit).
       keeps honest labeling with an explicit human assertion. Orthogonal to
       `^:unsafe` (dialect only); a form may carry both. (Community norms
       confirmed this direction; `ideas/self-host-log.md` Attempt 3.)
+    - **D6 follow-up 2 (full self-host, warning-clean pass):** `effect-violations`
+      now flags only ONE direction — computed-effectful-but-not-`!`-named — and
+      exempts `-main` (effectful entry point, never banged, like `deftest`) and
+      **trusts an existing `!`** (never demands its removal: the analyzer can't
+      see interop/opaque effects, and a `!` is the human's effect-assertion). This
+      cleared the `-main`s (6) and the interop-banged writes (`stop!`,
+      `upload-pack!`, … — 10). With `deps_pure rewrite-clj/clj-kondo` (store
+      setup — pure CST/analysis libs) + `^:reads` on the 27 genuine read/query/
+      observe wrappers (db SELECTs, `render-ns`/`analyze` memoized reads, git
+      reads, the oracle `observe`/`test-run`), a full self-host load went from
+      **104 → 6** warnings, the 6 being genuinely-effectful shell dispatchers
+      (`mcp/handle`, `git/import-hook`, `http/handler`, …) — true positives, left
+      as-is. No self-host special-casing: all three are general slopp behavior.
   - **M5 shipped:** the `^:integration` test tier (see `verification.md`) —
     the fast per-write path skips `^:integration` tests via a
     `skip-integration?` filter in `rt/traced-run`; `test_run`/`checkpoint`/

@@ -59,3 +59,21 @@
     (testing "but real violations still surface"
       (let [an2 (index/analyze "(ns d)\n(defn go [a] (swap! a inc))\n")]
         (is (some #(= 'd/go (:var %)) (index/effect-violations an2)))))))
+
+(deftest main-is-exempt-from-bang-rule                  ; entry-point convention
+  ;; -main is an effectful entry point that is never bang-named (Clojure
+  ;; convention), exactly like deftest — exempt it.
+  (let [an (index/analyze "(ns app)\n(defn -main [& a] (spit \"f\" a))\n")]
+    (is (not-any? #(= 'app/-main (:var %)) (index/effect-violations an)))))
+
+(deftest a-bang-is-trusted-never-flagged-for-removal    ; interop effects
+  ;; A `!` is a human assertion of effectfulness; when the analyzer computes a
+  ;; banged fn as pure (an interop/opaque effect it can't see — .close, a socket
+  ;; write), it must NOT demand the `!` be removed. Only the MISSING-`!`
+  ;; direction (effectful but unlabeled) is a real signal.
+  (let [an (index/analyze "(ns app)\n(defn shut! [x] (.close x))\n")]
+    (testing "banged-but-analyzer-thinks-pure is NOT a violation"
+      (is (not-any? #(= 'app/shut! (:var %)) (index/effect-violations an))))
+    (testing "missing-bang (effectful, unlabeled) is STILL flagged"
+      (let [an2 (index/analyze "(ns app)\n(defn go [a] (reset! a 1))\n")]
+        (is (some #(= 'app/go (:var %)) (index/effect-violations an2)))))))

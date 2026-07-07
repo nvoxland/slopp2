@@ -32,7 +32,7 @@
 
 (def ^:private jars-cache (atom {}))
 
-(defn dep-jars
+^:reads (defn dep-jars
   "The classpath entries contributed by `lib`@`coord` ALONE — its own jar plus
   any transitives, minus the clojure baseline (a classpath diff), so the
   surface/native scan is exactly this dependency's contribution. Returns a
@@ -46,7 +46,7 @@
           (swap! jars-cache assoc k js)
           js))))
 
-(defn surface
+^:reads (defn surface
   "Analyze `jars` (from `dep-jars`) into an API surface:
   {:namespaces #{ns…} :vars {ns/name {:arities :varargs-min :doc :macro? :private?}}}.
   clj-kondo over the jars (source-fed — Clojure libs ship source); public vars
@@ -84,7 +84,7 @@
   cache (which survives restart)."
   (atom {}))
 
-(defn surface-of
+^:reads (defn surface-of
   "Full surface for `lib`@`coord` (resolve jars, then analyze), memoized in
   process by `coord@version`. The slow path runs once per coord."
   [lib coord]

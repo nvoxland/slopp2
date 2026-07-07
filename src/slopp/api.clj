@@ -1010,7 +1010,7 @@
             (recur (assoc calls q cs) (into (subvec frontier 1) cs))))
         {:root root :calls calls}))))
 
-(defn query-eval
+^:reads (defn query-eval
   "Observe-only eval against the live image (the oracle): call anything —
   including effectful fns — but (re)defining code is rejected (T5); writes go
   through the edit tools so provenance stays airtight."
@@ -1024,7 +1024,7 @@
         {:error (:err r)}
         (:values r)))))
 
-(defn query-observe
+^:reads (defn query-observe
   "Run `driver-code` (observe-gated) while capturing the args and return value
   of up to `:limit` calls to `ns-sym/nm` — the oracle's direct answer to 'what
   flows through this function?' (D2: observe, don't declare)."
@@ -1035,7 +1035,7 @@
                        (format "(slopp.rt/observe '%s/%s (fn [] %s) %d)"
                                ns-sym nm driver-code limit)))))
 
-(defn query-macroexpand
+^:reads (defn query-macroexpand
   "Expand a form (built-in macros are part of the dialect; expansion is how
   the oracle explains them). Returns {:expand-1 str :full str} or {:error}."
   [session code]
@@ -1804,7 +1804,7 @@
                  (cond-> (merge {:tree tree} extra)
                    (seq (:deps st)) (assoc :deps (:deps st)))))))))
 
-(defn query-commits
+^:reads (defn query-commits
   "Milestones, newest first:
   [{:commit :description :target :status :agent :at :sha}]. Commit `:target`
   ids plug straight into query-changes :from/:to for between-milestone
@@ -2540,7 +2540,7 @@
   (when (.exists f)
     (doseq [^java.io.File c (reverse (file-seq f))] (.delete c))))
 
-(defn- load-line
+^:reads (defn- load-line
   "An inactive line's {:store :conn}: from memory, or lazily from its branch
   db in a durable session. nil if unknown."
   [session nm]

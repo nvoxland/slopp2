@@ -20,13 +20,13 @@
                         ns-sym))
     (:err res)))
 
-(defn test-run
+^:reads (defn test-run
   "Run `ns-sym`'s clojure.test tests in the live image; returns the summary map
   ({:test :pass :fail :error :type})."
   [handle ns-sym]
   (first (repl/eval! handle (format "(clojure.test/run-tests '%s)" ns-sym))))
 
-(defn traced-test-run
+^:reads (defn traced-test-run
   "Run `test-ns`'s tests in the image with form-tracing (slopp.rt): the fn
   vars of `test-ns`'s dependency CLOSURE are observed (item 2 — not every
   store namespace), so the result maps each test to the forms it exercised.

@@ -40,7 +40,7 @@
                            (re-find (re-pattern (str "\\(" nm "[\\s)]")) src2))]
             fid2))))
 
-(defn mine-store [dir]
+^:reads (defn mine-store [dir]
   (let [conn (db/open! dir)
         st   (try (db/load-store conn)
                   (finally (.close ^java.sql.Connection conn)))

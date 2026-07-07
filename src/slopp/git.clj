@@ -103,7 +103,7 @@
          (map #(format "%02x" %))
          (apply str))))
 
-(defn- lookup-sha [conn delta-id fp]
+^:reads (defn- lookup-sha [conn delta-id fp]
   (:git_map/sha (jdbc/execute-one!
                  conn ["SELECT sha FROM git_map
                         WHERE delta_id = ? AND fingerprint = ?" delta-id fp])))
@@ -492,7 +492,7 @@
             (recur (reduce disj pending ready)
                    (into out (map by-ns) (sort ready)))))))))
 
-(defn- sha-imported? [conn sha]
+^:reads (defn- sha-imported? [conn sha]
   (some? (jdbc/execute-one!
           conn ["SELECT 1 AS one FROM git_map WHERE sha = ?" sha])))
 

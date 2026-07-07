@@ -72,9 +72,17 @@ WARNINGS, never rejections. Store-ns and clojure-stdlib calls are unaffected
   `delete-file`). Reads and non-determinism (`slurp`, `rand`, `now`) are NOT
   effects — `!` tracks *modification* (what causes reload staleness), not
   referential transparency.
-- The rule: name ends in `!` ⇔ computed-effectful. Violations are surfaced as
-  warnings on every write (`edit/ns-warnings`) with the exact suggested name;
-  fixing one is just `rename!`.
+- The rule: a **computed-effectful var that is NOT `!`-named** is a violation
+  (name it `!`) — surfaced on every write (`edit/ns-warnings`) with the suggested
+  name; fixing one is just `rename!`. Only this ONE direction is flagged
+  (`index/effect-violations`), with two exemptions (self-host findings):
+  - **`-main` is exempt** (like `deftest`) — an effectful entry point that is
+    never bang-named by convention.
+  - **A `!` is trusted, never flagged for removal.** The reverse direction
+    (banged but the analyzer computes pure) is NOT reported: a `!` is a human
+    assertion of effectfulness, and the call graph can't see interop/opaque
+    effects (`.close`, a socket/JGit write), so demanding the `!` be removed
+    would be wrong. (Consistent with `^:unsafe`/`^:reads`: human assertion wins.)
 - **Known leak:** higher-order fns are effect-polymorphic and can't be soundly
   marked statically — runtime observation covers them.
 - **Open (F7, needs user):** stdout (`println`) is currently NOT a leaf —

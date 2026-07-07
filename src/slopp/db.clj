@@ -87,7 +87,7 @@
                         (pr-str (:dep-pure store #{}))]))
    nil))
 
-(defn data-version
+^:reads (defn data-version
   "SQLite's cheap foreign-commit detector: this value changes when ANOTHER
   connection (thread or process) has committed to the database since we last
   looked — our own writes through this connection don't bump it."
@@ -177,7 +177,7 @@
                         ON CONFLICT(k) DO UPDATE SET v = excluded.v"
                        (pr-str (or deps-map {}))]))
 
-(defn deps
+^:reads (defn deps
   "The store's external-dependency manifest, read straight from meta — for
   the git/native/launch paths that need it without opening a session."
   [conn]
@@ -185,7 +185,7 @@
               :meta/v edn/read-string)
       {}))
 
-(defn get-dep-surface
+^:reads (defn get-dep-surface
   "The cached analysis surface for a dependency `id` (\"lib@version\"), or nil."
   [conn id]
   (some-> (jdbc/execute-one! conn ["SELECT surface FROM dep_surface WHERE id = ?" id])
@@ -199,7 +199,7 @@
                         ON CONFLICT(id) DO UPDATE SET surface = excluded.surface"
                        id (pr-str surface)]))
 
-(defn get-dep-native
+^:reads (defn get-dep-native
   "The cached native-image verdict for a dependency `id`, or nil (P4-deps M6)."
   [conn id]
   (some-> (jdbc/execute-one! conn ["SELECT native FROM dep_surface WHERE id = ?" id])
@@ -212,7 +212,7 @@
                         ON CONFLICT(id) DO UPDATE SET native = excluded.native"
                        id (pr-str verdict)]))
 
-(defn rendered-sources
+^:reads (defn rendered-sources
   "{ns-sym rendered-source} straight from the element rows — the `source`
   column is each element's canonical serialization, so concatenation by pos
   IS the render-ns output, byte-exact. The live state without parsing,
@@ -225,7 +225,7 @@
           (jdbc/execute! conn ["SELECT ns, source FROM elements
                                 ORDER BY ns, pos"])))
 
-(defn commit-shas
+^:reads (defn commit-shas
   "P4-m8: {delta-id git-sha} from the projection's pinning table (created and
   written by slopp.git; this is read-only convenience for query surfaces).
   Nil when nothing has been projected. Only UNAMBIGUOUS rows: a delta id
@@ -242,14 +242,14 @@
           (jdbc/execute! conn ["SELECT delta_id, MIN(sha) AS sha, COUNT(*) AS n
                                 FROM git_map GROUP BY delta_id"]))))
 
-(defn deltas-after
+^:reads (defn deltas-after
   "The journal suffix past the first `n` deltas (incremental sync)."
   [conn n]
   (mapv row->delta
         (jdbc/execute! conn ["SELECT * FROM deltas ORDER BY seq LIMIT -1 OFFSET ?"
                              (long n)])))
 
-(defn load-store
+^:reads (defn load-store
   "Reconstruct the full in-memory store from the db, or nil if empty."
   [conn]
   (when-let [next-id (some-> (jdbc/execute-one!

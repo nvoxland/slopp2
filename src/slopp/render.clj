@@ -13,7 +13,7 @@
   item 2: the repeats were measurable per-write wall."
   (atom {}))
 
-(defn render-ns
+^:reads (defn render-ns
   "Render `ns-sym`'s current source as a string from the store. Memoized on
   the (immutable) elements vector."
   [store ns-sym]

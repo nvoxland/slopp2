@@ -29,7 +29,7 @@
   eval round 2 showed the re-runs dominating per-write wall time."
   (atom {}))
 
-(defn analyze
+^:reads (defn analyze
   "Run clj-kondo over `source` (fed via stdin, no disk); return its `:analysis`
   ({:var-definitions :var-usages :namespace-definitions :namespace-usages}).
   Memoized on the source string (bounded)."
@@ -102,25 +102,28 @@
   (= 'clojure.test/deftest (:defined-by d)))
 
 (defn effect-violations
-  "Vars whose `!`-naming disagrees with their computed effectfulness (D6). Each:
-  {:var node :effectful? bool :named-bang? bool :suggest new-name-string}.
-  deftest vars are exempt (T1). `external-ns?`/`pure-vars` (M3) extend the
-  effect anchors to opaque-dependency calls."
+  "Vars that are computed effectful (D6) but NOT `!`-named — the one actionable
+  direction: name it `!`. Each {:var node :effectful? true :named-bang? false
+  :suggest name!}. `external-ns?`/`pure-vars` (M3) extend the anchors to
+  opaque-dependency calls. Exemptions:
+  - `deftest` vars (T1) — tests exercise effects but are never banged.
+  - `-main` — an effectful entry point, never banged by convention.
+  - the REVERSE direction (banged but computed pure) is NOT reported: a `!` is a
+    human assertion of effectfulness, and the analyzer can't see interop/opaque
+    effects (`.close`, a socket/JGit write), so it must not demand the `!` be
+    removed. Only a MISSING `!` is a real signal."
   ([analysis] (effect-violations analysis nil nil))
   ([analysis external-ns? pure-vars]
    (let [eff (effectful-vars analysis external-ns? pure-vars)]
      (for [d (:var-definitions analysis)
            :when (not (test-definition? d))
-           :let [n         (node (:ns d) (:name d))
-                 effectful (contains? eff n)
-                 named     (bang? (:name d))]
-           :when (not= effectful named)]
-       {:var n :effectful? effectful :named-bang? named
-        :suggest (if effectful
-                   (str (:name d) "!")
-                   (str/replace (str (:name d)) #"!+$" ""))}))))
+           :when (not= '-main (:name d))
+           :let [n (node (:ns d) (:name d))]
+           :when (and (contains? eff n) (not (bang? (:name d))))]
+       {:var n :effectful? true :named-bang? false
+        :suggest (str (:name d) "!")}))))
 
-(defn analyze-with-locals
+^:reads (defn analyze-with-locals
   "Like `analyze`, but including local-binding definitions and usages
   (`:locals` / `:local-usages`, linked by `:id`) — the basis for free-variable
   computation in structural extraction."
@@ -130,7 +133,7 @@
      (kondo/run! {:lint ["-"]
                   :config {:analysis {:locals true} :output {:analysis true}}}))))
 
-(defn lint
+^:reads (defn lint
   "clj-kondo FINDINGS for `source` (syntax + best-practice violations, distinct
   from the :analysis extraction): [{:level :type :message :row :col} ...],
   warnings and errors only."
